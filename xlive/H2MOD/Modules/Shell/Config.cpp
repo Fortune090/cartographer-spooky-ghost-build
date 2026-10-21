@@ -510,6 +510,7 @@ void SaveH2Config()
 			CONFIG_SET(&ini, "ghost_viewer_key_offset_load", &GhostViewer::g_settings.key_offset_load);
 			CONFIG_SET(&ini, "ghost_viewer_pad_offset", &GhostViewer::g_settings.pad_offset);
 			CONFIG_SET(&ini, "ghost_viewer_offset_natural_reverts", &GhostViewer::g_settings.offset_natural_reverts);
+			CONFIG_SET(&ini, "ghost_viewer_oob_bar", &GhostViewer::g_settings.oob_bar);
 			CONFIG_SET(&ini, "ghost_viewer_col_pass_green", &GhostViewer::g_settings.col_pass);
 
 			CONFIG_SET(&ini, "discord_enable", &H2Config_discord_enable);
@@ -753,6 +754,7 @@ void ReadH2Config()
 				CONFIG_GET(&ini, "ghost_viewer_key_offset_load", "117", &GhostViewer::g_settings.key_offset_load);
 				CONFIG_GET(&ini, "ghost_viewer_pad_offset", "1", &GhostViewer::g_settings.pad_offset);
 				CONFIG_GET(&ini, "ghost_viewer_offset_natural_reverts", "false", &GhostViewer::g_settings.offset_natural_reverts);
+				CONFIG_GET(&ini, "ghost_viewer_oob_bar", "false", &GhostViewer::g_settings.oob_bar);
 				CONFIG_GET(&ini, "ghost_viewer_col_pass_green", "2162496", &GhostViewer::g_settings.col_pass);
 				CONFIG_GET(&ini, "discord_enable", "true", &H2Config_discord_enable);
 				CONFIG_GET(&ini, "fps_limit", "120", &H2Config_fps_limit);

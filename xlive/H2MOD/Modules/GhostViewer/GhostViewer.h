@@ -54,7 +54,8 @@ namespace GhostViewer
 		int col_pass = 0x20FF40;          // pass-through (flashing green)
 		int key_offset_save = 0x74;       // Save Offsets key (VK_F5)
 		int key_offset_load = 0x75;       // Load Offsets key (VK_F6)
-		bool offset_natural_reverts = false;  // also restore saved offsets after natural reverts to that checkpoint
+		bool offset_natural_reverts = false;
+		bool oob_bar = false;              // out-of-bounds / kill volume death bar  // also restore saved offsets after natural reverts to that checkpoint
 		int pad_offset = 1;               // controller shortcut: 0 none, 1 Back + D-pad L/R, 2 Back + LB/RB, 3 LS click + D-pad L/R
 		int col_obj_box = 0x9090FF;       // object piece box (skipped, honest)
 		int col_obj_believed = 0xFFA000;  // believed poses (objects)

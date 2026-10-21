@@ -1055,6 +1055,16 @@ namespace GhostViewer
 		   checkpoint has rebuilt the player's pairs (new level welder) write the snapshot back. Load: set the revert flag
 		   (0x48224F), wait for the pairs, check the player is where the snapshot was taken, write the TIMs back.
 		   Written per pair: the cached separating normal (+0x20) and the TIM (+0x2C); never pairs in contact. */
+		// out-of-bounds / kill volume death bar state (see update_death_state)
+		struct s_death_state
+		{
+			bool valid = false;
+			int oob_counter = 0, oob_limit = 15, oob_next_check = 0, player_index = 0;
+			int kv_count = 0, kv_enabled = 0, kv_checking = -1;
+			std::vector<std::pair<int, int>> kv_inside;      // (kill volume, ticks until its turn)
+			float bar = -1.f; char text[64] = {};
+		};
+		s_death_state g_death;
 		struct s_offset_entry { bool obj; uint64_t id; v3 normal; float tim; };
 		enum e_offset_phase { _offset_idle, _offset_wait, _offset_apply };
 		int g_offset_req = 0;                 // 1 save, 2 load (GUI button / hotkey, render thread)
@@ -2082,6 +2092,24 @@ namespace GhostViewer
 					for (const auto& r : g.travel) ImGui::Text("      %s", r.c_str());
 				}
 			}
+			if (g_settings.oob_bar && g_death.valid)
+			{
+				ImGui::Separator();
+				if (g_death.oob_counter > 0)
+					ImGui::TextColored(ImVec4(0.47f, 0.86f, 1.f, 1.f), "OUT OF BOUNDS (your body is inside solid / outside the level): %d of %d ticks - killed in %d ticks",
+						g_death.oob_counter, g_death.oob_limit + 1, g_death.oob_limit + 1 - g_death.oob_counter);
+				else
+					ImGui::TextDisabled("OUT OF BOUNDS: not counting. The check starts only on ticks where (tick + player index %d) %% 16 == 0 - next in %d ticks; then %d ticks in a row kill",
+						g_death.player_index, g_death.oob_next_check, g_death.oob_limit + 1);
+				if (g_death.kv_count > 0)
+				{
+					ImGui::Text("KILL VOLUMES: %d (%d enabled)   one checked per tick: #%d this tick", g_death.kv_count, g_death.kv_enabled, g_death.kv_checking);
+					if (g_death.kv_inside.empty()) ImGui::TextDisabled("    you are not inside an enabled kill volume");
+					for (const auto& in : g_death.kv_inside)
+						ImGui::TextColored(ImVec4(1.f, 0.9f, 0.f, 1.f), "    INSIDE kill volume #%d - checked in %d ticks; then every %d ticks", in.first, in.second, g_death.kv_count);
+				}
+				else ImGui::TextDisabled("KILL VOLUMES: none on this map");
+			}
 			ImGui::End();
 		}
 	}
@@ -2267,6 +2295,104 @@ namespace GhostViewer
 		}
 	}
 
+	/* ---- out-of-bounds / kill volume death bar ----
+	   Two ways the game kills you outside the level (halo2.exe, found in MCC first and matched here):
+	   OUT OF BOUNDS (player update 0x458CC6): the unit's physics point is tested against solid collision
+	     (sub_53DD81). Counter = byte player+0x3A: +1 per tick inside solid, reset to 0 the first tick it is not. While
+	     it is 0 the test only runs on ticks where (game_time + player index) % 16 == 0. Killed when the counter passes
+	     round(0.5 s * ticks/s) = 15, i.e. on the 16th tick in a row.
+	   KILL VOLUMES (unit update -> sub_4B3B0A): ONE kill volume is tested per tick, in rotation:
+	     (game_time + (unit index & 0xFFFF)) % count. Inside an enabled one, you die on its turn.
+	   The bar shows whichever comes first, full / green draining to red, with what it is and the ticks left. */
+	namespace
+	{
+
+		typedef bool(__cdecl* t_trigger_volume_test)(int32 trigger_volume, datum object);
+		int trigger_volume_test(int16 trigger, datum object)
+		{
+			__try { return ((t_trigger_volume_test)addr(0x27E58))(trigger, object) ? 1 : 0; }   // halo2.exe 0x427E58
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+
+		void update_death_state()
+		{
+			s_death_state d;
+			const datum pi = player_index_from_user_index(0);
+			const player_datum* player = pi != NONE ? (const player_datum*)datum_get(player_data_get(), pi) : nullptr;
+			if (!player || player->unit_index == NONE) { g_death = d; return; }
+			const datum unit = player->unit_index;
+			const uintptr_t time_globals = u32(addr(0x4C06E4));                    // game time globals
+			const uint32 tick = okp(time_globals) ? u32(time_globals + 8) : 0;
+			int tps = okp(time_globals) ? (int)*(const int16*)(time_globals + 2) : 30;
+			if (tps <= 0 || tps > 120) tps = 30;
+			d.valid = true;
+			d.player_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(pi);
+			d.oob_counter = *((const uint8*)player + 0x3A);
+			d.oob_limit = (int)std::lround(tps * 0.5f);                          // sub_47C0DB (fistp, nearest)
+			d.oob_next_check = (int)((16u - ((tick + (uint32)d.player_index) & 15u)) & 15u);
+
+			int best = INT32_MAX;
+			auto offer = [&](int left, int period, const char* what)
+			{
+				if (left < 0 || period <= 0 || left >= best) return;
+				best = left;
+				d.bar = std::clamp((float)left / (float)period, 0.f, 1.f);
+				snprintf(d.text, sizeof(d.text), "%s - %d ticks", what, left);
+			};
+			if (d.oob_counter > 0) offer(d.oob_limit + 1 - d.oob_counter, d.oob_limit + 1, "OUT OF BOUNDS");
+
+			// kill volumes: scenario (*0x879E74) +0x230 count / +0x234 offset of the int16 trigger volume list (tag
+			// data base *0x882290); disabled bits at *0x8D2AB0 (bit set = disabled by script)
+			const uintptr_t scen = u32(addr(0x479E74)), tag_base = u32(addr(0x482290));
+			if (okp(scen) && okp(tag_base))
+			{
+				const int32 count = *(const int32*)(scen + 0x230), off = *(const int32*)(scen + 0x234);
+				const uintptr_t bits = u32(addr(0x4D2AB0));
+				if (count > 0 && count < 4096 && off != -1)
+				{
+					const int16* list = (const int16*)(tag_base + (uint32)off);
+					d.kv_count = count;
+					d.kv_checking = (int)((tick + (unit & 0xFFFF)) % (uint32)count);
+					for (int k = 0; k < count; ++k)
+					{
+						const bool enabled = !okp(bits) || ((u32(bits + 4 * (k >> 5)) >> (k & 31)) & 1) == 0;
+						if (!enabled) continue;
+						++d.kv_enabled;
+						const int16 trigger = list[k];
+						if (trigger < 0 || trigger_volume_test(trigger, unit) != 1) continue;
+						const int64_t r = ((int64_t)k - (int64_t)tick - (int64_t)(unit & 0xFFFF)) % count;
+						const int ticks = (int)(r < 0 ? r + count : r);
+						d.kv_inside.push_back({ k, ticks });
+						char what[32]; snprintf(what, sizeof(what), "KILL VOLUME #%d", k);
+						offer(ticks, count, what);
+					}
+				}
+			}
+			g_death = d;
+		}
+
+		void draw_death_bar()
+		{
+			if (g_death.bar < 0.f) return;
+			const ImGuiIO& io = ImGui::GetIO();
+			ImDrawList* dl = ImGui::GetForegroundDrawList();
+			const float w = (std::max)(220.f, io.DisplaySize.x * 0.28f), h = (std::max)(14.f, io.DisplaySize.y * 0.018f);
+			const ImVec2 a(io.DisplaySize.x * 0.5f - w * 0.5f, io.DisplaySize.y * 0.30f), b(a.x + w, a.y + h);
+			const float f = g_death.bar;
+			const ImU32 fill = IM_COL32((int)(255.f * (1.f - f)), (int)(220.f * f + 35.f * (1.f - f)), 40, 235);
+			dl->AddRectFilled(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), IM_COL32(0, 0, 0, 170), 4.f);
+			dl->AddRectFilled(a, ImVec2(a.x + w * f, b.y), fill, 3.f);
+			dl->AddRect(a, b, IM_COL32(255, 255, 255, 120), 3.f, 0, 1.5f);
+			if (g_death.text[0])
+			{
+				const ImVec2 ts = ImGui::CalcTextSize(g_death.text);
+				const ImVec2 tp(io.DisplaySize.x * 0.5f - ts.x * 0.5f, a.y - ts.y - 6.f);
+				dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2), IM_COL32(0, 0, 0, 170), 3.f);
+				dl->AddText(tp, fill | 0xFF000000u, g_death.text);
+			}
+		}
+	}
+
 	void draw_overlay(void)
 	{
 		++g_frame_counter;
@@ -2286,7 +2412,10 @@ namespace GhostViewer
 			else pending = 0;
 		}
 		for (auto& g : g_info) g = s_info{};
-		if (!game_in_progress()) return;
+		if (!game_in_progress()) { g_death = s_death_state{}; return; }
+		// the death bar works on its own (it only needs the game running, not the Ghost viewer)
+		if (g_settings.oob_bar && !game_time_get_paused() && !cinematic_in_progress()) { update_death_state(); draw_death_bar(); }
+		else g_death = s_death_state{};
 		if (!g_settings.enabled || game_time_get_paused() || cinematic_in_progress()) return;   // nothing while paused / in menus / in cutscenes
 
 
@@ -2353,6 +2482,8 @@ namespace GhostViewer
 		auto section = [](const char* name) { ImGui::Spacing(); ImGui::TextDisabled("%s", name); ImGui::Separator(); };
 
 		section("Player");
+		ImGui::Checkbox("Out-of-bounds timer bar", &s.oob_bar);
+		tip("An on-screen bar for whatever will kill you first outside the level: the out-of-bounds count (your body inside solid / outside the level; 16 ticks in a row kill, and the first check only comes on every 16th tick) or the turn of a kill volume you are inside (one volume is checked per tick, in rotation). Full / green draining to red, labelled OUT OF BOUNDS or KILL VOLUME #k with the ticks left. Works without the Ghost viewer; the info panel adds the numbers.");
 		ImGui::Checkbox("Backstep rewind poses", &s.rewind);
 		tip("Yellow = where the last backstep put you back to, orange = where you were before it.");
 		ImGui::Checkbox("Pass-through prediction", &s.pass_through);
