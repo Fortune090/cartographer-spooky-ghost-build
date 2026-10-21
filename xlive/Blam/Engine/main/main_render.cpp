@@ -3,17 +3,15 @@
 
 #include "main_screenshot.h"
 
-#include "camera/observer.h"
 #include "cutscene/cinematics.h"
 #include "game/player_mapping.h"
 #include "game/players.h"
 #include "rasterizer/dx9/rasterizer_dx9_main.h"
-#include "rasterizer/dx9/rasterizer_dx9_errors.h"
 #include "rasterizer/rasterizer_main.h"
-#include "render/render.h"
 #include "render/render_cartographer_ingame_ui.h"
 
 #include "H2MOD/Modules/Shell/Config.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 
 /* globals */
 
@@ -127,7 +125,7 @@ void __cdecl main_render_player_view(void)
 		
 		if (user_index != NONE)
 		{
-			observer_result = observer_get_camera(user_index);
+			observer_result = GhostViewer::camera_override(user_index, observer_get_camera(user_index));
 			ASSERT(observer_result != NULL);
 		}
 
@@ -141,7 +139,7 @@ void __cdecl main_render_player_view(void)
 	rasterizer_get_screen_and_frame_bounds(
 		&window->rasterizer_camera.viewport_bounds,
 		&window->rasterizer_camera.window_bounds);
-	render_camera_build(&window->rasterizer_camera, NULL, NULL, NULL);
+	render_camera_build(&window->rasterizer_camera, 0, 0, 0);
 
 	if (!debug_render_freeze || window->single_view)
 	{
@@ -168,7 +166,7 @@ void __cdecl main_render_previous_backbuffer(int32 a1, int32 a2)
 		&g_window_bounds[0].rasterizer_camera.viewport_bounds,
 		&g_window_bounds[0].rasterizer_camera.window_bounds);
 
-	render_camera_build(&g_window_bounds[0].rasterizer_camera, NULL, NULL, NULL);
+	render_camera_build(&g_window_bounds[0].rasterizer_camera, 0, 0, 0);
 	
 	if (!debug_render_freeze || g_window_bounds[0].single_view)
 	{
@@ -180,7 +178,6 @@ void __cdecl main_render_previous_backbuffer(int32 a1, int32 a2)
 
 	s_rasterizer_dx9_main_globals* rasterizer_dx9_globals = rasterizer_dx9_main_globals_get();
 	IDirect3DSurface9* backbuffer;
-
 	if (screenshot_in_progress())
 	{
 		backbuffer = rasterizer_dx9_globals->global_d3d_surface_screenshot;
@@ -188,20 +185,15 @@ void __cdecl main_render_previous_backbuffer(int32 a1, int32 a2)
 	}
 	else
 	{
-		rasterizer_dx9_log(
-			rasterizer_dx9_globals->global_d3d_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer)
-		);
+		rasterizer_dx9_globals->global_d3d_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer);
 	}
 
-	rasterizer_dx9_log(
-		rasterizer_dx9_globals->global_d3d_device->StretchRect(
-			rasterizer_dx9_globals->global_d3d_surface_render_primary,
-			NULL,
-			backbuffer,
-			NULL,
-			D3DTEXF_NONE
-		)
-	);
+	rasterizer_dx9_globals->global_d3d_device->StretchRect(
+		rasterizer_dx9_globals->global_d3d_surface_render_primary,
+		NULL,
+		backbuffer,
+		NULL,
+		D3DTEXF_NONE);
 
 	if (backbuffer)
 	{

@@ -1,9 +1,6 @@
 #include "stdafx.h"
 #include "render_cartographer_ingame_ui.h"
 
-#include "render.h"
-#include "render_cartographer_ingame_variant_ui.h"
-#include "cartographer/build_version/cartographer_build_version.h"
 #include "cartographer/twizzler/twizzler.h"
 
 #include "game/game.h"
@@ -24,13 +21,6 @@
 #include "H2MOD/Modules/Achievements/Achievements.h"
 #include "H2MOD/Modules/Updater/Updater.h"
 #include "version_git.h"
-#include "cache/cache_files.h"
-#include "input/input_windows.h"
-#include "interface/multiplayer_variant_settings_interface_definition.h"
-#include "rasterizer/dx9/rasterizer_dx9_dof.h"
-#include "rasterizer/dx9/rasterizer_dx9_primitives.h"
-#include "rasterizer/dx9/rasterizer_dx9_submit.h"
-#include "text/text.h"
 
 /* defines */
 
@@ -54,6 +44,7 @@ enum
 	k_cheevo_display_lifetime = (5 * k_shell_time_msec_denominator),
 };
 
+static const char g_cartographer_build_text[] = "Project Cartographer (v" DLL_VERSION_STR ") - Build Time: " __DATE__ " "  __TIME__;
 
 /* prototypes */
 
@@ -63,7 +54,6 @@ static bool render_cartographer_achievement_message(const char* achivement_messa
 static void render_cartographer_update_message(const char* update_text, int64 update_size_bytes, int64 update_downloaded_bytes);
 static void render_netdebug_text(void);
 static void render_main_game_time_debug(void);
-
 
 /* globals */
 
@@ -85,7 +75,7 @@ void render_cartographer_ingame_ui(void)
 #endif
 
 	rasterizer_dx9_perf_event_begin("render cartographer ingame ui", NULL);
-	render_cartographer_status_bar(k_cartographer_build_text);
+	render_cartographer_status_bar(g_cartographer_build_text);
 	render_cartographer_update_message(g_auto_update_text, sizeOfDownload, sizeOfDownloaded);
 	if (!AchievementMap.empty())
 	{
@@ -99,10 +89,8 @@ void render_cartographer_ingame_ui(void)
 	render_cartographer_git_build_info();
 	render_netdebug_text();
 	render_main_game_time_debug();
-
-	cartographer_ingame_variant_ui_render();
-
 	rasterizer_dx9_perf_event_end("render cartographer ingame ui");
+
 	return;
 }
 
@@ -153,7 +141,7 @@ void render_cartographer_status_bar(const char *build_text)
 
 void render_cartographer_git_build_info(void)
 {
-#if defined(GEN_GIT_VER_VERSION_STRING) && defined(CARTOGRAPHER_TEST_BUILD_DRAW_TEXT) 
+#if 0	// build date / version / branch watermark disabled
 	const s_rasterizer_globals* rasterizer_globals = rasterizer_globals_get();
 
 	const int16 line_height = get_text_size_from_font_cache(k_status_text_font);
@@ -342,7 +330,7 @@ void render_netdebug_text(void)
 					netdebug_data->client_rtt_msec = (int16)observer_channel->net_rtt;
 					netdebug_data->client_packet_rate = (int16)(observer_channel->stream_packet_rate * 10.f);
 					netdebug_data->client_throughput = (int16)((observer_channel->throughput_bps * 10.f) / 1024.f);
-					netdebug_data->client_packet_loss_percentage = (int16)(observer_channel->packet_loss_statistics.average_values_in_window() * 100.f);
+					netdebug_data->client_packet_loss_percentage = (int16)(observer_channel->field_440.average_values_in_window() * 100.f);
 
 					// NOT UPDATED IN REAL-TIME
 					//s_network_session_peer* membership_peer = session->get_peer_membership(session->get_local_peer_index());

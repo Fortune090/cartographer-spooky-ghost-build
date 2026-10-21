@@ -1,5 +1,7 @@
 #pragma once
 
+struct s_observer_result;   // declared in camera/observer.h; only used by pointer here
+
 struct render_camera
 {
 	real_point3d point;
@@ -14,7 +16,7 @@ struct render_camera
 	real32 z_near;
 	real32 z_far;
 	real_plane3d mirror_plane;
-	bool enlarge_view;
+	bool tiled;
 	int8 pad1[3];
 	real32 unk_floats[3];
 	bool bool_2;
@@ -44,6 +46,8 @@ ASSERT_STRUCT_SIZE(render_projection, 192);
 
 void render_cameras_apply_patches(void);
 
+render_projection* global_projection_get(void);
+
 void __cdecl render_camera_build_projection(render_camera* camera,
 	real_rectangle2d* frustum_bounds,
 	render_projection* projection);
@@ -64,8 +68,4 @@ bool render_camera_world_to_screen(
 	const real_point3d* view_point,
 	real_point2d* screen_point);
 
-void render_camera_build(
-	render_camera* camera,
-	const struct s_observer_result* observer,
-	const point2d* view_size,
-	const point2d* view_array_size);
+void __cdecl render_camera_build(render_camera* camera, s_observer_result* result, int16* a3, int16* a4);

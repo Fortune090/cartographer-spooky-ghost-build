@@ -1,11 +1,21 @@
 #pragma once
 
 #include "render_cameras.h"
+#include "render_layers.h"
 #include "render_visibility_collection.h"
 
 #include "input/controllers.h"
 #include "effects/player_effects.h"
 #include "scenario/scenario_fog.h"
+
+/* s_render_scene_parameters: used by this snapshot but never defined. halo2.exe copies three dwords into it
+   (0x662105 -> 0xE3DA30/34/38) and the screen-effect pass skips when the second one is non-zero (0x67E54C). */
+struct s_render_scene_parameters
+{
+	int32 field_0;
+	int32 effect_flags;
+	int32 field_8;
+};
 
 /* enums */
 
@@ -16,17 +26,12 @@ enum e_display_split_type : uint32
 	_display_split_type_vertical = 2
 };
 
-enum e_frame_type
+enum e_screen_split_type : uint8
 {
-	_render_frame_none= 0,
-	_render_frame_1,
-	_render_frame_2,
-	_render_frame_3,
-	_render_frame_4,
-	_render_frame_5,
-	_render_frame_6,
-	_render_frame_7,
-	NUMBER_OF_RENDER_FRAME_TYPES
+	_screen_split_type_full = 0,
+	_screen_split_type_half = 1,
+	_screen_split_type_quarter = 2,
+	k_split_screen_type_count
 };
 
 /* structures */
@@ -61,15 +66,15 @@ struct s_frame
 };
 ASSERT_STRUCT_SIZE(s_frame, 664);
 
-struct rasterizer_frame_begin_parameters
+struct s_frame_parameters
 {
-	e_frame_type frame_type;
+	uint32 frame_type;
 	int32 unk0;
 	real64 time;
 	int32 dword_10;
 	int32 dword_14;
 };
-ASSERT_STRUCT_SIZE(rasterizer_frame_begin_parameters, 24);
+ASSERT_STRUCT_SIZE(s_frame_parameters, 24);
 
 struct window_bound
 {
@@ -90,31 +95,13 @@ struct rasterizer_scene_begin_parameters
 };
 ASSERT_STRUCT_SIZE(rasterizer_scene_begin_parameters, 12);
 
+/* globals */
 
-struct s_render
-{
-	render_camera camera;
-	render_projection projection;
-	int32 player_window_index;
-	int32 user_render_index;
-	int32 controller_render_index;
-	int32 leaf_index;
-	int32 cluster_index;
-	bool bsp_test_failed;
-	bool visible_sky_model;
-	int32 visible_sky_index;
-	s_scenario_fog_result fog;
-	bool unk_0;
-	uint32 render_light_flags;
-	bool __render_light_flags_are_enabled;
-	bool unk_1;
-};
+extern bool render_lens_flares_enabled;
 
 /* public code */
 
 void render_apply_patches(void);
-
-s_render* render_get(void);
 
 window_bound* get_user_window_bounds(int32 user_index);
 
@@ -130,7 +117,7 @@ uint32* global_frame_index_get(void);
 
 int32* get_global_window_bound_index(void);
 
-rasterizer_frame_begin_parameters* global_frame_parameters_get(void);
+s_frame_parameters* global_frame_parameters_get(void);
 
 int32* global_rasterizer_pixel_shader_index_get(void);
 
@@ -142,21 +129,25 @@ real32* hs_texture_camera_scale_get(void);
 
 bool* hs_texture_camera_view_get(void);
 
+s_scenario_fog_result* global_fog_result_get(void);
+
 int32* global_user_render_index_get(void);
 
-uint32* global_effect_flag_get(void);
+s_render_scene_parameters* global_render_scene_parameters_get(void);
 
 // ### TODO: better function name
 bool frame_parameters_type_is_above_or_equal_to_7(void);
 
-void render_scene_geometry(e_collection_type collection_type, enum e_render_layer render_layer);
+void rasterizer_render_scene(bool is_texture_camera);
+
+void render_scene_geometry(e_collection_type collection_type, e_render_layer render_layer);
 
 // CLIENT ONLY
 // Get cluster index and leaf index from render position provided
 // Return true if out_cluster_index and out_leaf_index are valid
 bool __cdecl render_structure_find_camera(real_point3d* point, int32* out_cluster_index, int32* out_leaf_index);
 
-void __cdecl render_light_suppressor_enable(void);
+e_screen_split_type get_screen_split_type(int32 render_user_index);
 
 void render_frame_present(struct bitmap_data* bitmap);
 
@@ -180,9 +171,3 @@ void __cdecl render_scene(
 	real32 depth_range);
 
 void __cdecl render_nonplayer_frame(window_bound* window_bounds);
-
-/* globals */
-
-extern bool render_patchy_fog_enabled;
-extern bool render_lens_flares_enabled;
-extern bool render_decals_enabled;

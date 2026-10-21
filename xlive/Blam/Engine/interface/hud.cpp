@@ -13,9 +13,9 @@
 #include "game/game_engine.h"
 #include "game/game_engine_util.h"
 #include "game/game_globals.h"
-#include "game/players.h"
 #include "main/main_screenshot.h"
 #include "render/render.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 
 /* typedefs */
 
@@ -88,7 +88,7 @@ void set_crosshair_offset(real32 offset)
 {
 	if (!isnan(offset))
 	{
-		TAG_BLOCK_GET_ELEMENT(&scenario_get_game_globals()->player_control, 0, s_game_globals_player_control)->crosshair_location.y = offset;
+		scenario_get_game_globals()->player_control[0]->crosshair_location.y = offset;
 	}
 }
 
@@ -101,6 +101,8 @@ void __cdecl hud_update(void)
 void interface_draw_screen(void)
 {
 	int32 g_user_render_index = *global_user_render_index_get();
+	// the window parameters still hold this player's scene camera and projection here (nav points are projected with them)
+	if (g_user_render_index != NONE) GhostViewer::capture_view(g_user_render_index, global_window_parameters_get());
 	if (g_user_render_index != NONE && !new_hud_dont_draw())
 	{
 		datum player_index = player_index_from_user_index(g_user_render_index);
@@ -108,9 +110,8 @@ void interface_draw_screen(void)
 			sub_4701B6(player_index) &&
 			!cubemap_screenshot_in_progress())
 		{
-			s_hud_scripted_globals const* g_hud_scripted_globals = get_hud_scripted_globals();
-			player_datum const* player = player_get(player_index);
-
+			const s_hud_scripted_globals* g_hud_scripted_globals = get_hud_scripted_globals();
+			const player_datum* player = (player_datum*)datum_get(player_data_get(), player_index);
 			int32 perspective = director_get_perspective(g_user_render_index);
 
 			if (g_hud_scripted_globals->field_0)

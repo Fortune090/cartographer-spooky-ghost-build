@@ -3,7 +3,6 @@
 
 #include "cseries/cseries_system_memory.h"
 #include "game/game_globals.h"
-#include "main/game_preferences.h"
 #include "memory/data.h"
 #include "networking/network_event.h"
 #include "scenario/scenario.h"
@@ -11,7 +10,6 @@
 #include "sound/sound_cache_file_definitions.h"
 #include "tag_files/tag_loader/tag_injection.h"
 #include "tag_files/tag_loader/tag_injection_manager.h"
-#include "tag_files/tag_group_access.h"
 
 /* typedefs */
 
@@ -31,6 +29,7 @@ void* tag_get_safe(tag_group group, datum tag_index);
 
 /* public code */
 
+
 void cache_files_apply_patches(void)
 {
 	// Default Maps
@@ -42,14 +41,9 @@ void cache_files_apply_patches(void)
 	return;
 }
 
-void* cache_file_handle_get(void)
+HANDLE* cache_file_handle_get()
 {
 	return Memory::GetAddress<HANDLE*>(0x4AE8A8, 0x4CF128);
-}
-
-uintptr_t* tag_data_get(void)
-{
-	return Memory::GetAddress<uintptr_t*>(0x482290, 0x4A6438);
 }
 
 s_cache_file_memory_globals* cache_file_memory_globals_get(void)
@@ -57,18 +51,7 @@ s_cache_file_memory_globals* cache_file_memory_globals_get(void)
 	return Memory::GetAddress<s_cache_file_memory_globals*>(0x47CD60, 0x4A29C8);
 }
 
-void* tag_data_get_from_instance(
-	cache_file_tag_instance const* tag_instance)
-{
-	ASSERT(tag_instance);
-
-	return
-		tag_instance->data_offset != NONE ?
-		(void*)(tag_instance->data_offset + *tag_data_get()) :
-		NULL;
-}
-
-bool cache_file_is_loaded(void)
+bool cache_file_is_loaded()
 {
 	const s_cache_file_memory_globals* cache_file_memory_globals = cache_file_memory_globals_get();
 
@@ -113,7 +96,7 @@ cache_file_tag_instance* cache_get_tag_instance(datum tag_index)
 tag_iterator* tag_iterator_new(tag_iterator* itr, e_tag_group type)
 {
 	itr->next_tag_index = 0;
-	itr->tag_type = type;
+	itr->tag_type.group = type;
 	return itr;
 }
 
@@ -158,7 +141,7 @@ bool scenario_tags_load_process_shared_tags()
 {
 	s_cache_file_memory_globals* cache_file_memory = cache_file_memory_globals_get();
 
-	cache_file_tags_header* tag_header = cache_file_memory->tags_header;
+	const cache_file_tags_header* tag_header = cache_file_memory->tags_header;
 	cache_file_tags_header* unmasked_tag_header = (cache_file_tags_header*)cache_file_memory->tag_cache_base_address;
 	cache_file_header* cache_header = cache_files_get_header();
 	cache_file_header shared_header;
@@ -192,7 +175,7 @@ bool scenario_tags_load_process_shared_tags()
 	unmasked_tag_header->tag_group_link_set = (s_tag_group_link*)&unmasked_tag_header[1];
 	unmasked_tag_header->tag_instances = (cache_file_tag_instance*)(((char*)&unmasked_tag_header[1]) + sizeof(s_tag_group_link) * unmasked_tag_header->tag_group_link_set_count);
 
-	if(tag_header->tag_count >= FIRST_SHARED_TAG_INSTANCE_INDEX)
+	if (tag_header->tag_count >= FIRST_SHARED_TAG_INSTANCE_INDEX)
 	{
 		// Update cache tag_header's instances referencing shared tags
 		int32 absolute_index = FIRST_SHARED_TAG_INSTANCE_INDEX;
@@ -227,7 +210,7 @@ bool __cdecl scenario_tags_load_internal(const char* scenario_path)
 		}
 		else if (!custom_map)
 		{
-			error(_error_immediate, "the cache file '%s' belongs to an incompatible build (%s)", cache_file_memory_globals->header.name, cache_file_memory_globals->header.version_string);
+			error(_error_log, "the cache file '%s' belongs to an incompatible build (%s)", cache_file_memory_globals->header.name, cache_file_memory_globals->header.version_string);
 		}
 	}
 
@@ -243,9 +226,9 @@ bool __cdecl scenario_tags_load_internal(const char* scenario_path)
 
 	if(!cache_file_memory_globals->tag_cache_base_address)
 	{
-		error(_error_immediate, "failed to allocate the physical memory for the tags");
+		error(_error_log, "failed to allocate the physical memory for the tags");
 cache_file_header_invalid:
-		error(_error_immediate, "cache file header is invalid");
+		error(_error_log, "cache file header is invalid");
 		goto scenario_tags_load_internal_end;
 	}
 
@@ -262,7 +245,7 @@ cache_file_header_invalid:
 	if (!is_compatible)
 	{
 		global_preferences_flag_dirty();
-		error(_error_immediate, "failed to read the tags header, instances, and names section");
+		error(_error_log, "failed to read the tags header, instances, and names section");
 		event(_event_error, "failed to read the tags header, instances, and names section [%s]", scenario_path);
 		goto cache_file_header_invalid;
 	}
@@ -274,7 +257,7 @@ cache_file_header_invalid:
 	if(!is_compatible)
 	{
 		global_preferences_flag_dirty();
-		error(_error_immediate, "failed to read the tag data section");
+		error(_error_log, "failed to read the tag data section");
 		event(_event_error, "failed to read the tag data section [%s]", scenario_path);
 		goto cache_file_header_invalid;
 	}
@@ -284,7 +267,7 @@ cache_file_header_invalid:
 	if(!tag_header->tag_instances || tag_header->tag_count <= 0 || tag_header->signature != 'tags')
 	{
 		global_preferences_flag_dirty();
-		error(_error_immediate, "tag header is invalid");
+		error(_error_log, "tag header is invalid");
 		event(_event_error, "tag header is invalid [%s]", scenario_path);
 		goto cache_file_header_invalid;
 	}
@@ -341,7 +324,7 @@ cache_file_header_invalid:
 
 	if(tag_header->tag_count >= FIRST_SHARED_TAG_INSTANCE_INDEX && !scenario_tags_load_process_shared_tags())
 	{
-		error(_error_immediate, "failed to load shared tag instances");
+		error(_error_log, "failed to load shared tag instances");
 		is_compatible = false;
 	}
 
@@ -350,7 +333,7 @@ cache_file_header_invalid:
 scenario_tags_load_internal_end:
 	if (!is_compatible)
 	{
-		error(_error_immediate, "failed to load tags for cache file");
+		error(_error_log, "failed to load tags for cache file");
 
 		if (cache_file_memory_globals->tag_cache_base_address)
 		{
@@ -377,38 +360,7 @@ scenario_tags_load_internal_end:
 	return is_compatible;
 }
 
-void* tag_get(
-	uint32 expected_group_tag,
-	int32 tag_index)
-{
-	cache_file_tag_instance const* tag_instance = cache_file_tag_instance_try_and_get_unsafe(tag_index);
-	s_tag_group_link* group = tag_group_get_link_set(tag_instance->group_tag);
-
-	ASSERT(group);
-
-	{
-		char group_name[16];
-		char expected_group_name[16];
-
-		SUPRESS_UNUSED(group_name);
-		SUPRESS_UNUSED(expected_group_name);
-
-		vassert(
-			group->child == expected_group_tag || group->parent_2 == expected_group_tag || group->parent == expected_group_tag,
-			"expected tag group '%s' but got '%s' for %08x",
-			tag_to_string(tag_instance->group_tag, group_name),
-			tag_to_string(expected_group_tag, expected_group_name),
-			tag_index);
-	}
-
-	vassert(tag_instance->data_offset!=NONE && *tag_data_get() + tag_instance->data_offset!=NULL, "can't call tag_get() on a cache file tag with a NULL base address", NULL);
-
-	return tag_data_get_from_instance(tag_instance);
-}
-
-datum tag_loaded(
-	uint32 group_tag,
-	char const* name)
+datum tag_loaded(int32 group_tag, const char* name)
 {
 	const s_cache_file_memory_globals* g_cache_file_memory_globals = cache_file_memory_globals_get();
 	datum result = NONE;
@@ -422,8 +374,7 @@ datum tag_loaded(
 		for (int32 i = 0; i < g_cache_file_memory_globals->tags_header->tag_count; ++i)
 		{
 			const cache_file_tag_instance* tag_instance = &global_tag_instances[i];
-
-			if (group_tag == tag_instance->group_tag)
+			if (group_tag == tag_instance->group_tag.group)
 			{
 				const char* tag_name = tag_get_name(tag_instance->tag_index);
 				if (!csstricmp(name, tag_name))
@@ -445,7 +396,7 @@ datum tag_loaded(
 		for (uint16 i = k_first_injected_datum; i < last_injected_index; ++i)
 		{
 			const cache_file_tag_instance* tag_instance = &global_tag_instances[i];
-			if (group_tag == tag_instance->group_tag)
+			if (group_tag == tag_instance->group_tag.group)
 			{
 				const char* tag_name = tag_get_name(tag_instance->tag_index);
 				if (!csstricmp(name, tag_name))
@@ -456,7 +407,6 @@ datum tag_loaded(
 			}
 		}
 	}
-
 	return result;
 }
 
@@ -464,11 +414,13 @@ const char* tag_get_name(datum tag_index)
 {
 	uint16 tag_name_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(tag_index);
 
+#ifdef ASSERTS_ENABLED
 	s_cache_file_memory_globals* g_cache_file_memory_globals = cache_file_memory_globals_get();
 	ASSERT(g_cache_file_memory_globals->tags_loaded);
 	
 	// We added a second check if the first one fails, since we're going to be passing it tag indexes in the injected tag area
 	ASSERT(IN_RANGE(tag_name_index, 0, g_cache_file_memory_globals->header.debug_tag_name_count - 1) || IN_RANGE(tag_name_index - k_first_injected_datum, 0, g_cache_file_memory_globals->header.debug_tag_name_count - 1));
+#endif
 
 	int32 tag_name_offset = g_cache_file_debug_globals.debug_tag_name_offsets[tag_name_index];
 
@@ -521,7 +473,7 @@ void* tag_get_safe(tag_group group, datum tag_index)
 
 			if (group_link)
 			{
-				if (group_link->child == group|| group_link->parent_2 == group || group_link->parent == group)
+				if (group_link->child.group == group.group || group_link->parent_2.group == group.group || group_link->parent.group == group.group)
 				{
 					return (void*)((char*)cache_file_memory->tag_cache_base_address + tag_instance->data_offset);
 				}

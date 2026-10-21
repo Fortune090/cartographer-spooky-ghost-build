@@ -16,12 +16,12 @@
 #include "interface/first_person_weapons.h"
 #include "networking/messages/network_messages_cartographer.h"
 #include "networking/logic/life_cycle_manager.h"
-#include "networking/session/network_session.h"
 #include "rasterizer/rasterizer_globals.h"
 
 #include "H2MOD.h"
 #include "H2MOD/Modules/CustomMenu/CustomLanguage.h"
 #include "H2MOD/Modules/Shell/Config.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 #include "H2MOD/Modules/SpecialEvents/SpecialEvents.h"
 
 #ifndef NDEBUG
@@ -259,7 +259,7 @@ namespace ImGuiHandler {
 						ImGui::SetTooltip(advanced_settings_get_string(_advanced_string_static_fp_tooltip));
 					ImGui::NextColumn();
 
-					if (g_advanced_settings_current_controller_index == _controller0)
+					if (g_advanced_settings_current_controller_index == _controller_index_0)
 					{
 						ImGui::Checkbox(advanced_settings_get_string(_advanced_string_show_hud), &should_show_hud);
 						if (ImGui::IsItemEdited())
@@ -360,7 +360,7 @@ namespace ImGuiHandler {
 
 					//Disable Light Suppressor
 
-					ImGui::Checkbox(advanced_settings_get_string(_advanced_string_light_suppressor), &H2Config_light_suppressor_disable);
+					ImGui::Checkbox(advanced_settings_get_string(_advanced_string_light_suppressor), &H2Config_light_suppressor);
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip(advanced_settings_get_string(_advanced_string_light_suppressor_tooltip));
 				}
@@ -387,7 +387,7 @@ namespace ImGuiHandler {
 					ImGui::Checkbox("##MK_Sep", &g_advanced_settings_current_cartographer_profile->mouse_uniform);
 					if (ImGui::IsItemEdited())
 					{
-						input_abstraction_set_mouse_look_sensitivity(_controller0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
+						input_abstraction_set_mouse_look_sensitivity(_controller_index_0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
 					}
 					if (ImGui::IsItemHovered())
 					{
@@ -423,7 +423,7 @@ namespace ImGuiHandler {
 						if (ImGui::IsItemEdited())
 						{
 							g_advanced_settings_current_cartographer_profile->mouse_sensitivity = (real32)g_mouse_sens;
-							input_abstraction_set_mouse_look_sensitivity(_controller0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
+							input_abstraction_set_mouse_look_sensitivity(_controller_index_0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
 						}
 						ImGui::PushItemWidth(WidthPercentage(15));
 
@@ -431,13 +431,13 @@ namespace ImGuiHandler {
 						if (ImGui::IsItemEdited()) {
 
 							g_advanced_settings_current_cartographer_profile->mouse_sensitivity = PIN(g_advanced_settings_current_cartographer_profile->mouse_sensitivity, 1.f, 100.f);
-							input_abstraction_set_mouse_look_sensitivity(_controller0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
+							input_abstraction_set_mouse_look_sensitivity(_controller_index_0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
 						}
 						ImGui::PushItemWidth(WidthPercentage(10));
 						if (ImGui::Button(advanced_settings_get_string(_advanced_string_reset, "Mousesens3"), ImVec2(WidthPercentage(10), item_size.y)))
 						{
 							g_advanced_settings_current_cartographer_profile->mouse_sensitivity = 3.0f;
-							input_abstraction_set_mouse_look_sensitivity(_controller0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
+							input_abstraction_set_mouse_look_sensitivity(_controller_index_0, g_advanced_settings_current_cartographer_profile->mouse_sensitivity);
 						}
 					}
 				}
@@ -681,7 +681,7 @@ namespace ImGuiHandler {
 							twizzler_set_status(g_twizzler_checkbox);
 							for (int32 i = 0; i < NetworkSession::GetPeerCount(); i++)
 							{
-								TEST_N_DEF(PC10);
+								network_message_cartographer_send_anti_cheat(i);
 							}
 						}
 						if (ImGui::IsItemHovered())
@@ -694,9 +694,10 @@ namespace ImGuiHandler {
 						//XDelay
 						TextVerticalPad(advanced_settings_get_string(_advanced_string_disable_x_delay));
 						ImGui::SameLine(ImGui::GetColumnWidth() - 35);
-						
-						ImGui::Checkbox("##XDelay", &H2Config_xDelay);
-
+						if (ImGui::Checkbox("##XDelay", &H2Config_xDelay))
+						{
+							H2MOD::RefreshTogglexDelay();
+						}
 						ImGui::Columns(1);
 						ImGui::Separator();
 						ImGui::Columns(3, NULL, false);
@@ -924,20 +925,21 @@ namespace ImGuiHandler {
 			if (ImGui::Begin(advanced_settings_get_string(_advanced_string_title), &open, window_flags))
 			{
 				HudSettings();
-				if (g_advanced_settings_current_controller_index == _controller0)
+				if (g_advanced_settings_current_controller_index == _controller_index_0)
 				{
 					VideoSettings();
 					MouseKeyboardSettings();
 				}
 				ControllerSettings();
-				if (g_advanced_settings_current_controller_index == _controller0)
+				if (g_advanced_settings_current_controller_index == _controller_index_0)
 				{
 					HostSettings();
 					GameSettings();
+					GhostViewer::render_settings_ui();   // its own "Ghost / TIM Viewer" header, under Game Settings
 				}
 
 #ifndef NDEBUG
-				if (g_advanced_settings_current_controller_index == _controller0)
+				if (g_advanced_settings_current_controller_index == _controller_index_0)
 				{
 					if (ImGui::CollapsingHeader("Dev Testing"))
 					{
@@ -1065,7 +1067,7 @@ namespace ImGuiHandler {
 			{
 				cartographer_player_profile_save(g_advanced_settings_current_controller_index);
 
-				if(g_advanced_settings_current_controller_index == _controller0)
+				if(g_advanced_settings_current_controller_index == _controller_index_0)
 					SaveH2Config();
 			}
 		}
@@ -1092,7 +1094,7 @@ static const char* advanced_settings_get_string(e_advanced_string string, const 
 
 static void advanced_settings_create_weapon_offsets_button(real32 height)
 {
-	ImVec2 b3_size = ImVec2(ImGuiHandler::WidthPercentage(100.f / 3.f), height);
+	ImVec2 b3_size = ImVec2(ImGuiHandler::WidthPercentage(33.3333333333f), height);
 	ImGui::NewLine();
 	//Ingame Change Display
 	if (ImGui::Button(advanced_settings_get_string(_advanced_string_weaponoffsets, "WeaponOffsets"), b3_size))

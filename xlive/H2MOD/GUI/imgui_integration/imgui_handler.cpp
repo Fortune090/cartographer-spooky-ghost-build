@@ -14,6 +14,7 @@
 #include "ImGui_CartographerStyle.h"
 #include "Console/ImGui_ConsoleImpl.h"
 #include "ImGui_NetworkStatsOverlay.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 
 #include "imgui_ProdigyCleanTTF.h"
 
@@ -103,6 +104,7 @@ namespace ImGuiHandler
 		static bool display_network_stats = false;
 		display_network_stats = g_network_stats_overlay == _network_stats_display_complete;
 		ShowNetworkStatsOverlay(&display_network_stats);
+		GhostViewer::draw_overlay();
 		for (int8 i = 0; i < k_imgui_window_type_count; ++i)
 		{
 			bool should_render = g_imgui_window_should_render.test(i);

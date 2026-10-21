@@ -5,7 +5,6 @@
 
 #include "cutscene/cinematics.h"
 #include "effects/player_effects.h"
-#include "game/game.h"
 #include "game/game_time.h"
 #include "game/players.h"
 #include "interface/first_person_weapons.h"
@@ -16,7 +15,8 @@
 #include "scenario/scenario.h"
 #include "shell/shell.h"
 
-#include "saved_games/game_variant.h"
+#include "H2MOD/Modules/CustomVariantSettings/CustomVariantSettings.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 
 /* constants */
 
@@ -25,8 +25,9 @@ enum
 	OBSERVER_SIGNATURE = 'rad!'
 };
 
-constexpr real32 k_observer_default_field_of_view = 78.f;
-constexpr real32 k_observer_default_field_of_view_radians = DEGREES_TO_RADIANS(k_observer_default_field_of_view);
+/* globals */
+
+static real32 g_camera_speed = 1.0f;
 
 /* prototypes */
 
@@ -45,10 +46,6 @@ static void observer_update_command_to_usercall(int32 user_index);
 static void __cdecl observer_postcheck(int32 user_index);
 
 static void observer_apply_camera_effect(int32 user_index);
-
-/* globals */
-
-static real32 g_camera_speed = 1.0f;
 
 /* public code */
 
@@ -126,7 +123,7 @@ void __cdecl observer_validate_camera_command(s_observer_command* observer_comma
 	return;
 }
 
-real32 observer_default_field_of_view(void)
+real32 observer_suggested_field_of_view(void)
 {
 	return *Memory::GetAddress<real32*>(0x413780, 0x3B5300);
 }
@@ -137,24 +134,14 @@ void observer_set_suggested_field_of_view(real32 fov)
 	if (fov <= 0 || fov > 110) return;
 
 	float final_fov_rad;
-	
-	if (game_is_multiplayer())
-	{
-		s_game_variant* variant = get_game_variant();
-		if (variant && variant->cartographer_settings.flags.test(_cartographer_variant_force_default_fov))
-		{
-			final_fov_rad = k_observer_default_field_of_view_radians;
-		}
-		else
-		{
-			final_fov_rad = DEGREES_TO_RADIANS(fov);
-		}
-	}
-	else
+	if (currentVariantSettings.forced_fov == 0)
 	{
 		final_fov_rad = DEGREES_TO_RADIANS(fov);
 	}
-	
+	else
+	{
+		final_fov_rad = DEGREES_TO_RADIANS(currentVariantSettings.forced_fov);
+	}
 	*Memory::GetAddress<float*>(0x413780, 0x3B5300) = final_fov_rad;
 	return;
 }
@@ -226,7 +213,8 @@ static void observer_apply_camera_effect(int32 user_index)
 {
 	real_matrix4x3 camera_effect_matrix = *global_identity4x3;
 	s_observer* observer = observer_get_from_user(user_index);
-	if (user_index != NONE)
+	// third person camera: no weapon / player camera effects (shake, melee and recoil kicks)
+	if (user_index != NONE && !GhostViewer::third_person_active())
 	{
 		if (director_get_perspective(user_index) == _director_mode_game)
 		{
@@ -260,7 +248,7 @@ static void observer_apply_camera_effect(int32 user_index)
 		normalize3d_with_default(&up, global_forward3d);
 		if (!valid_real_vector3d_axes2(&forward, &up))
 		{
-			error(_error_delayed, "camera effect matrix was bad, cannot recover");
+			error(_error_silent, "camera effect matrix was bad, cannot recover");
 			forward = *global_forward3d;
 			up = *global_up3d;
 		}

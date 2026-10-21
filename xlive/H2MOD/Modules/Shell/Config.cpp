@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "Config.h"
+#include "H2MOD/Modules/GhostViewer/GhostViewer.h"
 
 #include "simpleini/SimpleIni.h"
 
@@ -56,7 +57,7 @@ bool H2Config_disable_ingame_keyboard = false;
 bool H2Config_hide_ingame_chat = false;
 bool H2Config_xDelay = true;
 bool H2Config_shader_lod_max = false;
-bool H2Config_light_suppressor_disable = false;
+bool H2Config_light_suppressor = false;
 bool H2Config_voice_chat = false;
 char H2Config_dedi_server_name[XUSER_NAME_SIZE] = { "" };
 char H2Config_dedi_server_playlist[MAX_PATH] = { "" };
@@ -212,6 +213,8 @@ bool H2Config_force_off_d3d9ex = false;
 bool H2Config_force_off_sm3 = false;
 bool H2Config_use_vsync = false;
 
+WPARAM H2Config_hotkeyIdHelp = VK_F2;
+WPARAM H2Config_hotkeyIdToggleHideIngameChat = VK_F9;
 WPARAM H2Config_hotkeyIdGuide = VK_HOME;
 WPARAM H2Config_hotkeyIdConsole = VK_F10;
 
@@ -464,6 +467,51 @@ void SaveH2Config()
 
 			CONFIG_SET(&ini, "skip_intro", &H2Config_skip_intro);
 
+			CONFIG_SET(&ini, "ghost_viewer_enabled", &GhostViewer::g_settings.enabled);
+			CONFIG_SET(&ini, "ghost_viewer_rewind", &GhostViewer::g_settings.rewind);
+			CONFIG_SET(&ini, "ghost_viewer_tim_overlay", &GhostViewer::g_settings.tim_overlay);
+			CONFIG_SET(&ini, "ghost_viewer_tim_labels", &GhostViewer::g_settings.tim_labels);
+			CONFIG_SET(&ini, "ghost_viewer_believed", &GhostViewer::g_settings.believed);
+			CONFIG_SET(&ini, "ghost_viewer_link_labels", &GhostViewer::g_settings.link_labels);
+			CONFIG_SET(&ini, "ghost_viewer_edges", &GhostViewer::g_settings.edges);
+			CONFIG_SET(&ini, "ghost_viewer_edges_suspect_only", &GhostViewer::g_settings.edges_suspect_only);
+			CONFIG_SET(&ini, "ghost_viewer_travel", &GhostViewer::g_settings.travel);
+			CONFIG_SET(&ini, "ghost_viewer_info_panel", &GhostViewer::g_settings.info_panel);
+			CONFIG_SET(&ini, "ghost_viewer_believed_max", &GhostViewer::g_settings.believed_max);
+			CONFIG_SET(&ini, "ghost_viewer_offset_threshold_um", &GhostViewer::g_settings.over_min_um);
+			CONFIG_SET(&ini, "ghost_viewer_show_threshold_um", &GhostViewer::g_settings.show_min_um);
+			CONFIG_SET(&ini, "ghost_viewer_hold_ticks", &GhostViewer::g_settings.hold_ticks);
+			CONFIG_SET(&ini, "ghost_viewer_col_normal", &GhostViewer::g_settings.col_normal);
+			CONFIG_SET(&ini, "ghost_viewer_col_desync", &GhostViewer::g_settings.col_desync);
+			CONFIG_SET(&ini, "ghost_viewer_col_stuck", &GhostViewer::g_settings.col_stuck);
+			CONFIG_SET(&ini, "ghost_viewer_col_believed", &GhostViewer::g_settings.col_believed);
+			CONFIG_SET(&ini, "ghost_viewer_col_rewind_to", &GhostViewer::g_settings.col_rewind_to);
+			CONFIG_SET(&ini, "ghost_viewer_col_rewind_from", &GhostViewer::g_settings.col_rewind_from);
+			CONFIG_SET(&ini, "ghost_viewer_col_tim_ok", &GhostViewer::g_settings.col_tim_ok);
+			CONFIG_SET(&ini, "ghost_viewer_col_tim_suspect", &GhostViewer::g_settings.col_tim_suspect);
+			CONFIG_SET(&ini, "ghost_viewer_col_tim_contact", &GhostViewer::g_settings.col_tim_contact);
+			CONFIG_SET(&ini, "ghost_viewer_col_sheet", &GhostViewer::g_settings.col_sheet);
+			CONFIG_SET(&ini, "ghost_viewer_third_person", &GhostViewer::g_settings.third_person);
+			CONFIG_SET(&ini, "ghost_viewer_tp_distance_mwu", &GhostViewer::g_settings.tp_distance_mwu);
+			CONFIG_SET(&ini, "ghost_viewer_tp_height_mwu", &GhostViewer::g_settings.tp_height_mwu);
+			CONFIG_SET(&ini, "ghost_viewer_tp_side_mwu", &GhostViewer::g_settings.tp_side_mwu);
+			CONFIG_SET(&ini, "ghost_viewer_obj_tims", &GhostViewer::g_settings.obj_tims);
+			CONFIG_SET(&ini, "ghost_viewer_obj_believed", &GhostViewer::g_settings.obj_believed);
+			CONFIG_SET(&ini, "ghost_viewer_col_obj_box", &GhostViewer::g_settings.col_obj_box);
+			CONFIG_SET(&ini, "ghost_viewer_col_obj_believed", &GhostViewer::g_settings.col_obj_believed);
+			CONFIG_SET(&ini, "ghost_viewer_travel_objects", &GhostViewer::g_settings.travel_objects);
+			CONFIG_SET(&ini, "ghost_viewer_weld_zones", &GhostViewer::g_settings.weld_zones);
+			CONFIG_SET(&ini, "ghost_viewer_weld_range_mwu", &GhostViewer::g_settings.weld_range_mwu);
+			CONFIG_SET(&ini, "ghost_viewer_logger", &GhostViewer::g_settings.logger);
+			CONFIG_SET(&ini, "ghost_viewer_pass_through", &GhostViewer::g_settings.pass_through);
+			CONFIG_SET(&ini, "ghost_viewer_disable_ai", &GhostViewer::g_settings.disable_ai);
+			CONFIG_SET(&ini, "ghost_viewer_invulnerable", &GhostViewer::g_settings.invulnerable);
+			CONFIG_SET(&ini, "ghost_viewer_key_offset_save", &GhostViewer::g_settings.key_offset_save);
+			CONFIG_SET(&ini, "ghost_viewer_key_offset_load", &GhostViewer::g_settings.key_offset_load);
+			CONFIG_SET(&ini, "ghost_viewer_pad_offset", &GhostViewer::g_settings.pad_offset);
+			CONFIG_SET(&ini, "ghost_viewer_offset_natural_reverts", &GhostViewer::g_settings.offset_natural_reverts);
+			CONFIG_SET(&ini, "ghost_viewer_col_pass_green", &GhostViewer::g_settings.col_pass);
+
 			CONFIG_SET(&ini, "discord_enable", &H2Config_discord_enable);
 
 			CONFIG_SET(&ini, "fps_limit", &H2Config_fps_limit);
@@ -472,7 +520,7 @@ void SaveH2Config()
 
 			CONFIG_SET(&ini, "shader_lod_max", &H2Config_shader_lod_max);
 
-			CONFIG_SET(&ini, "light_suppressor", &H2Config_light_suppressor_disable);
+			CONFIG_SET(&ini, "light_suppressor", &H2Config_light_suppressor);
 
 			CONFIG_SET(&ini, "disable_ingame_keyboard", &H2Config_disable_ingame_keyboard);
 
@@ -530,6 +578,13 @@ void SaveH2Config()
 		else
 		{
 			c_static_string<64> vkstring;
+			vkstring.set("#");
+			GetVKeyCodeString(H2Config_hotkeyIdHelp, &vkstring);
+			CONFIG_SET_C(&ini, "hotkey_help", H2Config_hotkeyIdHelp, vkstring.get_string());
+
+			vkstring.set("#");
+			GetVKeyCodeString(H2Config_hotkeyIdToggleHideIngameChat, &vkstring);
+			CONFIG_SET_C(&ini, "hotkey_hide_ingame_chat", H2Config_hotkeyIdToggleHideIngameChat, vkstring.get_string());
 
 			vkstring.set("#");
 			GetVKeyCodeString(H2Config_hotkeyIdGuide, &vkstring);
@@ -655,16 +710,62 @@ void ReadH2Config()
 
 				CONFIG_GET(&ini, "language_label_capture", "false", &H2Config_custom_labels_capture_missing);
 				CONFIG_GET(&ini, "skip_intro", "false", &H2Config_skip_intro);
+				CONFIG_GET(&ini, "ghost_viewer_enabled", "false", &GhostViewer::g_settings.enabled);
+				CONFIG_GET(&ini, "ghost_viewer_rewind", "true", &GhostViewer::g_settings.rewind);
+				CONFIG_GET(&ini, "ghost_viewer_tim_overlay", "true", &GhostViewer::g_settings.tim_overlay);
+				CONFIG_GET(&ini, "ghost_viewer_tim_labels", "true", &GhostViewer::g_settings.tim_labels);
+				CONFIG_GET(&ini, "ghost_viewer_believed", "true", &GhostViewer::g_settings.believed);
+				CONFIG_GET(&ini, "ghost_viewer_link_labels", "false", &GhostViewer::g_settings.link_labels);
+				CONFIG_GET(&ini, "ghost_viewer_edges", "true", &GhostViewer::g_settings.edges);
+				CONFIG_GET(&ini, "ghost_viewer_edges_suspect_only", "true", &GhostViewer::g_settings.edges_suspect_only);
+				CONFIG_GET(&ini, "ghost_viewer_travel", "true", &GhostViewer::g_settings.travel);
+				CONFIG_GET(&ini, "ghost_viewer_info_panel", "true", &GhostViewer::g_settings.info_panel);
+				CONFIG_GET(&ini, "ghost_viewer_believed_max", "6", &GhostViewer::g_settings.believed_max);
+				CONFIG_GET(&ini, "ghost_viewer_offset_threshold_um", "80000", &GhostViewer::g_settings.over_min_um);
+				CONFIG_GET(&ini, "ghost_viewer_show_threshold_um", "5000", &GhostViewer::g_settings.show_min_um);
+				CONFIG_GET(&ini, "ghost_viewer_hold_ticks", "8", &GhostViewer::g_settings.hold_ticks);
+				CONFIG_GET(&ini, "ghost_viewer_col_normal", "16738740", &GhostViewer::g_settings.col_normal);
+				CONFIG_GET(&ini, "ghost_viewer_col_desync", "11206400", &GhostViewer::g_settings.col_desync);
+				CONFIG_GET(&ini, "ghost_viewer_col_stuck", "16719904", &GhostViewer::g_settings.col_stuck);
+				CONFIG_GET(&ini, "ghost_viewer_col_believed", "57599", &GhostViewer::g_settings.col_believed);
+				CONFIG_GET(&ini, "ghost_viewer_col_rewind_to", "16770560", &GhostViewer::g_settings.col_rewind_to);
+				CONFIG_GET(&ini, "ghost_viewer_col_rewind_from", "16734720", &GhostViewer::g_settings.col_rewind_from);
+				CONFIG_GET(&ini, "ghost_viewer_col_tim_ok", "8454016", &GhostViewer::g_settings.col_tim_ok);
+				CONFIG_GET(&ini, "ghost_viewer_col_tim_suspect", "16724016", &GhostViewer::g_settings.col_tim_suspect);
+				CONFIG_GET(&ini, "ghost_viewer_col_tim_contact", "16777088", &GhostViewer::g_settings.col_tim_contact);
+				CONFIG_GET(&ini, "ghost_viewer_col_sheet", "16721960", &GhostViewer::g_settings.col_sheet);
+				CONFIG_GET(&ini, "ghost_viewer_third_person", "false", &GhostViewer::g_settings.third_person);
+				CONFIG_GET(&ini, "ghost_viewer_tp_distance_mwu", "1000", &GhostViewer::g_settings.tp_distance_mwu);
+				CONFIG_GET(&ini, "ghost_viewer_tp_height_mwu", "150", &GhostViewer::g_settings.tp_height_mwu);
+				CONFIG_GET(&ini, "ghost_viewer_tp_side_mwu", "0", &GhostViewer::g_settings.tp_side_mwu);
+				CONFIG_GET(&ini, "ghost_viewer_obj_tims", "true", &GhostViewer::g_settings.obj_tims);
+				CONFIG_GET(&ini, "ghost_viewer_obj_believed", "true", &GhostViewer::g_settings.obj_believed);
+				CONFIG_GET(&ini, "ghost_viewer_col_obj_box", "9474303", &GhostViewer::g_settings.col_obj_box);
+				CONFIG_GET(&ini, "ghost_viewer_col_obj_believed", "16752640", &GhostViewer::g_settings.col_obj_believed);
+				CONFIG_GET(&ini, "ghost_viewer_travel_objects", "false", &GhostViewer::g_settings.travel_objects);
+				CONFIG_GET(&ini, "ghost_viewer_weld_zones", "false", &GhostViewer::g_settings.weld_zones);
+				CONFIG_GET(&ini, "ghost_viewer_weld_range_mwu", "1000", &GhostViewer::g_settings.weld_range_mwu);
+				CONFIG_GET(&ini, "ghost_viewer_logger", "false", &GhostViewer::g_settings.logger);
+				CONFIG_GET(&ini, "ghost_viewer_pass_through", "true", &GhostViewer::g_settings.pass_through);
+				CONFIG_GET(&ini, "ghost_viewer_disable_ai", "false", &GhostViewer::g_settings.disable_ai);
+				CONFIG_GET(&ini, "ghost_viewer_invulnerable", "false", &GhostViewer::g_settings.invulnerable);
+				CONFIG_GET(&ini, "ghost_viewer_key_offset_save", "116", &GhostViewer::g_settings.key_offset_save);
+				CONFIG_GET(&ini, "ghost_viewer_key_offset_load", "117", &GhostViewer::g_settings.key_offset_load);
+				CONFIG_GET(&ini, "ghost_viewer_pad_offset", "1", &GhostViewer::g_settings.pad_offset);
+				CONFIG_GET(&ini, "ghost_viewer_offset_natural_reverts", "false", &GhostViewer::g_settings.offset_natural_reverts);
+				CONFIG_GET(&ini, "ghost_viewer_col_pass_green", "2162496", &GhostViewer::g_settings.col_pass);
 				CONFIG_GET(&ini, "discord_enable", "true", &H2Config_discord_enable);
 				CONFIG_GET(&ini, "fps_limit", "120", &H2Config_fps_limit);
 
 				CONFIG_GET(&ini, "static_lod_state", "0", &H2Config_static_lod_state);
 				
 				CONFIG_GET(&ini, "shader_lod_max", "false", &H2Config_shader_lod_max);
-				CONFIG_GET(&ini, "light_suppressor", "false", &H2Config_light_suppressor_disable);
+				CONFIG_GET(&ini, "light_suppressor", "false", &H2Config_light_suppressor);
 				CONFIG_GET(&ini, "disable_ingame_keyboard", "false", &H2Config_disable_ingame_keyboard);
 				CONFIG_GET(&ini, "hide_ingame_chat", "false", &H2Config_hide_ingame_chat);
 
+				CONFIG_GET(&ini, "hotkey_help", "0x72", &H2Config_hotkeyIdHelp); // VK_F2
+				CONFIG_GET(&ini, "hotkey_hide_ingame_chat", "0x78", &H2Config_hotkeyIdToggleHideIngameChat); // VK_F9
 				CONFIG_GET(&ini, "hotkey_guide", "0x24", &H2Config_hotkeyIdGuide); // VK_HOME
 				CONFIG_GET(&ini, "hotkey_console", "0x79", &H2Config_hotkeyIdConsole); // VK_F10
 
@@ -804,15 +905,15 @@ void ReadH2Config()
 		}
 
 		// Increment base port for multiple instances so we don't interfere with each other
-		if (shell_get_instance_num() > 1 && H2Config_base_port == k_default_base_port)
+		if (g_instance_number > 1 && H2Config_base_port == k_default_base_port)
 		{
 			if (H2Config_base_port < 64000 + 1)
 			{
-				H2Config_base_port += 1000 * (uint16)shell_get_instance_num();
+				H2Config_base_port += 1000 * (uint16)g_instance_number;
 			}
 			else if (H2Config_base_port < 65535 - 10 + 1)
 			{
-				H2Config_base_port += 10 * (uint16)shell_get_instance_num();
+				H2Config_base_port += 10 * (uint16)g_instance_number;
 			}
 		}
 
@@ -826,8 +927,9 @@ void ReadH2Config()
 #pragma region Config Init/Deinit
 void InitH2Config()
 {
-	H2Config_disable_ingame_keyboard = shell_get_instance_num() > 1 ? true : false;
+	H2Config_disable_ingame_keyboard = g_instance_number > 1 ? true : false;
 	ReadH2Config();
+	H2MOD::RefreshTogglexDelay();
 	g_h2config_initialized = true;
 }
 void DeinitH2Config()
@@ -877,7 +979,7 @@ static void config_get_formatted_path(wchar_t* config_file_path, const wchar_t* 
 	// Use instance number by default
 	else
 	{
-		usnprintf(config_file_path, count, L"%ws%ws%d.ini", main_path, k_h2config_filenames[is_dedicated_server], shell_get_instance_num());
+		usnprintf(config_file_path, count, L"%ws%ws%d.ini", main_path, k_h2config_filenames[is_dedicated_server], g_instance_number);
 	}
 	return;
 }
