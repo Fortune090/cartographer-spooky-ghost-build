@@ -1065,9 +1065,11 @@ namespace GhostViewer
 			float bar = -1.f; char text[64] = {};
 		};
 		s_death_state g_death;
+		void draw_oob_panel_lines();   // (defined with the death bar)
 		struct s_offset_entry { bool obj; uint64_t id; v3 normal; float tim; };
 		enum e_offset_phase { _offset_idle, _offset_wait, _offset_apply };
 		int g_offset_req = 0;                 // 1 save, 2 load (GUI button / hotkey, render thread)
+		int g_lt_req = 0;                     // Launch / Teleport: 1 launch, 2 teleport (button or shortcut), taken by draw_overlay
 		std::string g_offset_status;          // panel line
 		double g_toast_until = 0; std::string g_toast;
 		void offset_toast(const std::string& s) { g_offset_status = s; g_toast = s; g_toast_until = ImGui::GetTime() + 3.5; }
@@ -2095,20 +2097,7 @@ namespace GhostViewer
 			if (g_settings.oob_bar && g_death.valid)
 			{
 				ImGui::Separator();
-				if (g_death.oob_counter > 0)
-					ImGui::TextColored(ImVec4(0.47f, 0.86f, 1.f, 1.f), "OUT OF BOUNDS (your body is inside solid / outside the level): %d of %d ticks - killed in %d ticks",
-						g_death.oob_counter, g_death.oob_limit + 1, g_death.oob_limit + 1 - g_death.oob_counter);
-				else
-					ImGui::TextDisabled("OUT OF BOUNDS: not counting. The check starts only on ticks where (tick + player index %d) %% 16 == 0 - next in %d ticks; then %d ticks in a row kill",
-						g_death.player_index, g_death.oob_next_check, g_death.oob_limit + 1);
-				if (g_death.kv_count > 0)
-				{
-					ImGui::Text("KILL VOLUMES: %d (%d enabled)   one checked per tick: #%d this tick", g_death.kv_count, g_death.kv_enabled, g_death.kv_checking);
-					if (g_death.kv_inside.empty()) ImGui::TextDisabled("    you are not inside an enabled kill volume");
-					for (const auto& in : g_death.kv_inside)
-						ImGui::TextColored(ImVec4(1.f, 0.9f, 0.f, 1.f), "    INSIDE kill volume #%d - checked in %d ticks; then every %d ticks", in.first, in.second, g_death.kv_count);
-				}
-				else ImGui::TextDisabled("KILL VOLUMES: none on this map");
+				draw_oob_panel_lines();
 			}
 			ImGui::End();
 		}
@@ -2163,9 +2152,24 @@ namespace GhostViewer
 		return &c;
 	}
 
+	namespace
+	{
+		typedef void(__cdecl* t_object_cause_damage)(void* damage_data, datum object_index, int16 node_index, int16 region_index, int16 material_index, void* object_normal);
+		datum g_invuln_units[4] = { NONE, NONE, NONE, NONE };   // the units currently protected (one per local player)
+		t_object_cause_damage p_object_cause_damage = nullptr;
+		void __cdecl object_cause_damage_hook(void* damage_data, datum object_index, int16 node_index, int16 region_index, int16 material_index, void* object_normal)
+		{
+			if (object_index != NONE)
+				for (const datum u : g_invuln_units)
+					if (u != NONE && u == object_index) return;     // Invulnerability: drop damage aimed at a protected unit
+			p_object_cause_damage(damage_data, object_index, node_index, region_index, material_index, object_normal);
+		}
+	}
+
 	void apply_patches(void)
 	{
 		DETOUR_ATTACH(p_director_get_perspective, Memory::GetAddress<t_director_get_perspective>(0x59E2B), director_get_perspective_hook);
+		DETOUR_ATTACH(p_object_cause_damage, Memory::GetAddress<t_object_cause_damage>(0x17AD81), object_cause_damage_hook);
 	}
 
 	void capture_view(int32 user_index, const s_frame* frame)
@@ -2182,13 +2186,14 @@ namespace GhostViewer
 	   Local campaign only (never in networked or multiplayer games). Both are undone when switched off.
 	     Disable AI:      ai_globals->ai_active = false (what "ai_enable false" does; ai_update at 0x70D941 skips all
 	                      AI while it is false - actors stand still and do not perceive or shoot).
-	     Invulnerability: the unit's "cannot take damage" object flag, bit 0x200000 of object+4 (what
-	                      object_cannot_take_damage sets: hs function 90 -> 0x533C93).                          */
+	     Invulnerability: object_cause_damage (0x57AD81) is detoured and drops damage aimed at a local player's unit.
+	                      Every kind of damage goes through it, including the kills the game applies itself (out
+	                      of bounds, kill volumes: the object update kills a marked object with the globals' kill
+	                      damage). The earlier version set bit 0x200000 of object+4, which is the cinematic-
+	                      visibility flag, not damage - so it never protected anything.                         */
 	namespace
 	{
 		bool g_ai_forced_off = false;
-		datum g_invuln_units[4] = { NONE, NONE, NONE, NONE };
-		constexpr uint32 k_cannot_take_damage = 0x200000;
 
 		void apply_practice_toggles(void)
 		{
@@ -2201,31 +2206,17 @@ namespace GhostViewer
 				else if (g_ai_forced_off) { ai->ai_active = true; g_ai_forced_off = false; }
 			}
 			else g_ai_forced_off = false;
-			// invulnerability, per local player's current unit
+			// invulnerability: remember each local player's current unit; the damage detour drops damage aimed at them
 			for (int32 u = 0; u < 4; ++u)
 			{
 				datum unit = NONE;
-				if (allowed && players_user_is_active(u))
+				if (allowed && g_settings.invulnerable && players_user_is_active(u))
 				{
 					const datum pi = player_index_from_user_index(u);
 					const player_datum* pl = pi != NONE ? (const player_datum*)datum_get(player_data_get(), pi) : nullptr;
 					if (pl) unit = pl->unit_index;
 				}
-				auto flags_of = [](datum d) -> uint32* {
-					if (d == NONE) return nullptr;
-					const uintptr_t obj = (uintptr_t)object_try_and_get_and_verify_type(d, _object_mask_all);
-					return okp(obj) ? (uint32*)(obj + 4) : nullptr;
-				};
-				// release a unit we protected when the toggle goes off or the player changes unit (death, vehicle swap)
-				if (g_invuln_units[u] != NONE && (!g_settings.invulnerable || g_invuln_units[u] != unit))
-				{
-					if (uint32* f = flags_of(g_invuln_units[u])) *f &= ~k_cannot_take_damage;
-					g_invuln_units[u] = NONE;
-				}
-				if (g_settings.invulnerable && unit != NONE)
-				{
-					if (uint32* f = flags_of(unit)) { *f |= k_cannot_take_damage; g_invuln_units[u] = unit; }
-				}
+				g_invuln_units[u] = unit;
 			}
 		}
 	}
@@ -2269,10 +2260,6 @@ namespace GhostViewer
 							{
 								save |= (b & XINPUT_GAMEPAD_DPAD_LEFT) != 0; load |= (b & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
 							}
-							else if (g_settings.pad_offset == 2 && (b & XINPUT_GAMEPAD_BACK))
-							{
-								save |= (b & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0; load |= (b & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-							}
 							else if (g_settings.pad_offset == 3 && (b & XINPUT_GAMEPAD_LEFT_THUMB))
 							{
 								save |= (b & XINPUT_GAMEPAD_DPAD_LEFT) != 0; load |= (b & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
@@ -2282,6 +2269,34 @@ namespace GhostViewer
 			if (save && !prev_save) g_offset_req = 1;
 			if (load && !prev_load) g_offset_req = 2;
 			prev_save = save; prev_load = load;
+
+			// Launch / Teleport shortcuts
+			static bool prev_launch = false, prev_teleport = false;
+			bool launch = false, teleport = false;
+			if (game_has_focus())
+			{
+				if (g_settings.key_launch > 0) launch |= (GetAsyncKeyState(g_settings.key_launch) & 0x8000) != 0;
+				if (g_settings.key_teleport > 0) teleport |= (GetAsyncKeyState(g_settings.key_teleport) & 0x8000) != 0;
+				if (g_settings.pad_launch_teleport > 0)
+					if (t_xinput_get_state fn = xinput_get_state())
+						for (DWORD i = 0; i < 4; ++i)
+						{
+							XINPUT_STATE st{};
+							if (fn(i, &st) != ERROR_SUCCESS) continue;
+							const WORD b = st.Gamepad.wButtons;
+							if (g_settings.pad_launch_teleport == 1 && (b & XINPUT_GAMEPAD_BACK))
+							{
+								launch |= (b & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0; teleport |= (b & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+							}
+							else if (g_settings.pad_launch_teleport == 2 && (b & XINPUT_GAMEPAD_LEFT_THUMB))
+							{
+								launch |= (b & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0; teleport |= (b & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+							}
+						}
+			}
+			if (launch && !prev_launch) g_lt_req = 1;
+			if (teleport && !prev_teleport) g_lt_req = 2;
+			prev_launch = launch; prev_teleport = teleport;
 		}
 		void draw_toast()
 		{
@@ -2292,6 +2307,122 @@ namespace GhostViewer
 			ImDrawList* dl = ImGui::GetForegroundDrawList();
 			dl->AddRectFilled(ImVec2(p.x - 10, p.y - 6), ImVec2(p.x + ts.x + 10, p.y + ts.y + 6), IM_COL32(10, 20, 30, 200), 6.f);
 			dl->AddText(p, IM_COL32(140, 215, 255, 255), g_toast.c_str());
+		}
+	}
+
+	/* ---- Launch / Teleport (like HCM's Force Launch / Force Teleport) ----
+	   Launch adds a velocity to your unit (or the vehicle you are in): relative = forward / right / up of where you are
+	   looking, absolute = a world vector. Teleport moves it: relative = that far forward / right / up from where you are,
+	   absolute = to a world position. Both write the Halo object's position / velocity, as HCM does. Local campaign
+	   only. Shortcuts: Back + D-pad Up = Launch, Back + D-pad Down = Teleport (by default), plus optional keys. */
+	namespace
+	{
+		// The object's Havok rigid bodies (all of them: a vehicle has several). The Halo position / velocity alone does not
+		// stick: the bodies are what get simulated, and the Halo object is updated from them every tick.
+		int32 object_bodies(datum object, uintptr_t out[16])
+		{
+			const uintptr_t obj = (uintptr_t)object_try_and_get_and_verify_type(object, _object_mask_all);
+			if (!okp(obj)) return 0;
+			const uint32 hv = u32(obj + 0xB4);
+			if (hv == 0xFFFFFFFF) return 0;
+			const data_array* comps = havok_components_get();
+			if (!comps || !okp((uintptr_t)comps->data)) return 0;
+			const int32 idx = (int32)(hv & 0xFFFF);
+			if (idx < 0 || idx >= comps->maximum_count || comps->size < 0x78) return 0;
+			const uintptr_t comp = (uintptr_t)comps->data + (uintptr_t)idx * (uintptr_t)comps->size;
+			const uintptr_t arr = u32(comp + 0x70);
+			const int32 n = i32(comp + 0x74);
+			if (!okp(arr) || n <= 0 || n > 64) return 0;
+			int32 k = 0;
+			for (int32 i = 0; i < n && k < 16; ++i)
+			{
+				const uintptr_t e = u32(arr + (uintptr_t)i * 0x60 + 0x40);
+				if (okp(e) && okp(u32(e + 0x3C))) out[k++] = e;
+			}
+			return k;
+		}
+
+		// Havok 2 motion (entity +0x3C): swept transform centres +0x60 (previous) and +0x70 (current, w = time)
+		void shift_vec(uintptr_t a, const v3& d)
+		{
+			v3 v;
+			if (!read_vec(a, v)) return;
+			const float n[3] = { v.x + d.x, v.y + d.y, v.z + d.z };
+			put(a, n, sizeof(n));
+		}
+
+		// halo2.exe object_set_velocities (0x535123, what the object_set_velocity script command ends in): sets the object's
+		// linear / angular velocity on the Halo object AND its Havok bodies, and wakes the physics up.
+		typedef void(__cdecl* t_object_set_velocities)(datum object_index, const real_vector3d* linear, const real_vector3d* angular);
+		bool call_object_set_velocities(datum object_index, const real_vector3d* linear)
+		{
+			__try { ((t_object_set_velocities)addr(0x135123))(object_index, linear, nullptr); return true; }
+			__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+		}
+
+		void do_launch_teleport(int what)
+		{
+			if (!(game_in_progress() && game_is_campaign() && !game_is_networked())) { offset_toast("Launch / Teleport: local campaign only"); return; }
+			const datum pi = player_index_from_user_index(0);
+			const player_datum* pl = pi != NONE ? (const player_datum*)datum_get(player_data_get(), pi) : nullptr;
+			if (!pl || pl->unit_index == NONE) { offset_toast("Launch / Teleport: no player unit"); return; }
+			unit_datum* u = (unit_datum*)object_try_and_get_and_verify_type(pl->unit_index, _object_mask_all);
+			if (!u) { offset_toast("Launch / Teleport: no player unit"); return; }
+			// seated: move the vehicle (HCM promotes to the vehicle the same way)
+			object_datum* target = (object_datum*)u;
+			if (u->object.parent_object_index != NONE)
+				if (object_datum* v = (object_datum*)object_try_and_get_and_verify_type(u->object.parent_object_index, _object_mask_all)) target = v;
+			// look basis: forward from the unit's looking vector, right = forward x up, up = right x forward
+			v3 f{ u->unit.looking_vector.i, u->unit.looking_vector.j, u->unit.looking_vector.k };
+			const bool ignore_z = what == 1 ? g_settings.launch_ignore_z : g_settings.teleport_ignore_z;
+			if (ignore_z) f.z = 0.f;
+			if (len(f) < 1e-4f) f = v3{ 1, 0, 0 };
+			f = norm(f);
+			v3 r = cross(f, v3{ 0, 0, 1 });
+			r = len(r) < 1e-4f ? v3{ 1, 0, 0 } : norm(r);
+			const v3 up = norm(cross(r, f));
+			char msg[128];
+			if (what == 1)
+			{
+				const v3 in{ g_settings.launch_x_mwu * 0.001f, g_settings.launch_y_mwu * 0.001f, g_settings.launch_z_mwu * 0.001f };
+				const v3 dv = g_settings.launch_absolute ? in : f * in.x + r * in.y + up * in.z;
+				// new velocity = current + launch (Halo units: world units per tick, like HCM's launch), set through the engine
+				const datum target_index = target == (object_datum*)u ? pl->unit_index : u->object.parent_object_index;
+				const real_vector3d& cur = target->object.translational_velocity;
+				real_vector3d nv; nv.i = cur.i + dv.x; nv.j = cur.j + dv.y; nv.k = cur.k + dv.z;
+				if (call_object_set_velocities(target_index, &nv))
+					snprintf(msg, sizeof(msg), "Launching with velocity %.2f, %.2f, %.2f", dv.x, dv.y, dv.z);
+				else snprintf(msg, sizeof(msg), "Launch failed (the engine call faulted)");
+			}
+			else
+			{
+				const v3 in{ g_settings.teleport_x_mwu * 0.001f, g_settings.teleport_y_mwu * 0.001f, g_settings.teleport_z_mwu * 0.001f };
+				real_point3d& pos = target->object.position;
+				const v3 from{ pos.x, pos.y, pos.z };
+				const v3 to = g_settings.teleport_absolute ? in : from + f * in.x + r * in.y + up * in.z;
+				pos.x = to.x; pos.y = to.y; pos.z = to.z;
+				// move the bodies by the same amount: transform, and BOTH swept-transform centres so the next step does not
+				// sweep (and collide) along the jump and put you back
+				const v3 d = to - from;
+				uintptr_t bodies[16];
+				const int32 nb = object_bodies(target == (object_datum*)u ? pl->unit_index : u->object.parent_object_index, bodies);
+				for (int32 i = 0; i < nb; ++i)
+				{
+					const uintptr_t m = u32(bodies[i] + 0x3C);
+					// swept-transform centres: previous and current position of the body
+					shift_vec(m + 0x60, d); shift_vec(m + 0x70, d);
+					// the transform's translation, in the motion state the collidable points at (collidable +8; transform
+					// at +0x20, translation +0x50) - only when that is not one of the two centres just moved
+					if (const uintptr_t h = handle_in_entity(bodies[i]))
+					{
+						const uintptr_t ms = u32(h - 0x10 + 8);
+						const uintptr_t tr = ms + 0x50;
+						if (okp(ms) && tr != m + 0x60 && tr != m + 0x70) shift_vec(tr, d);
+					}
+				}
+				snprintf(msg, sizeof(msg), "Teleporting to %.2f, %.2f, %.2f", to.x, to.y, to.z);
+			}
+			offset_toast(msg);
 		}
 	}
 
@@ -2339,7 +2470,9 @@ namespace GhostViewer
 				d.bar = std::clamp((float)left / (float)period, 0.f, 1.f);
 				snprintf(d.text, sizeof(d.text), "%s - %d ticks", what, left);
 			};
-			if (d.oob_counter > 0) offer(d.oob_limit + 1 - d.oob_counter, d.oob_limit + 1, "OUT OF BOUNDS");
+			// past the limit (kill blocked - invulnerability etc.) the count keeps climbing: show 0, empty and red
+			if (d.oob_counter > 0)
+				offer((std::max)(0, d.oob_limit + 1 - d.oob_counter), d.oob_limit + 1, d.oob_counter > d.oob_limit + 1 ? "OUT OF BOUNDS (kill blocked)" : "OUT OF BOUNDS");
 
 			// kill volumes: scenario (*0x879E74) +0x230 count / +0x234 offset of the int16 trigger volume list (tag
 			// data base *0x882290); disabled bits at *0x8D2AB0 (bit set = disabled by script)
@@ -2371,25 +2504,84 @@ namespace GhostViewer
 			g_death = d;
 		}
 
+		// a bar's rectangle from its anchor corner (0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left), the pixel offset
+		// from that corner to the bar's nearest corner, and its size
+		void bar_rect(int anchor, int ox, int oy, int w, int h, ImVec2& a, ImVec2& b)
+		{
+			const ImGuiIO& io = ImGui::GetIO();
+			const float x = (anchor == 1 || anchor == 2) ? io.DisplaySize.x - ox - w : (float)ox;
+			const float y = (anchor == 2 || anchor == 3) ? io.DisplaySize.y - oy - h : (float)oy;
+			a = ImVec2(x, y); b = ImVec2(x + w, y + h);
+		}
+
 		void draw_death_bar()
 		{
-			if (g_death.bar < 0.f) return;
-			const ImGuiIO& io = ImGui::GetIO();
 			ImDrawList* dl = ImGui::GetForegroundDrawList();
-			const float w = (std::max)(220.f, io.DisplaySize.x * 0.28f), h = (std::max)(14.f, io.DisplaySize.y * 0.018f);
-			const ImVec2 a(io.DisplaySize.x * 0.5f - w * 0.5f, io.DisplaySize.y * 0.30f), b(a.x + w, a.y + h);
-			const float f = g_death.bar;
-			const ImU32 fill = IM_COL32((int)(255.f * (1.f - f)), (int)(220.f * f + 35.f * (1.f - f)), 40, 235);
-			dl->AddRectFilled(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), IM_COL32(0, 0, 0, 170), 4.f);
-			dl->AddRectFilled(a, ImVec2(a.x + w * f, b.y), fill, 3.f);
-			dl->AddRect(a, b, IM_COL32(255, 255, 255, 120), 3.f, 0, 1.5f);
-			if (g_death.text[0])
+			// death bar: whichever kill comes first, full / green draining to red, label above
+			if (g_death.bar >= 0.f)
 			{
-				const ImVec2 ts = ImGui::CalcTextSize(g_death.text);
-				const ImVec2 tp(io.DisplaySize.x * 0.5f - ts.x * 0.5f, a.y - ts.y - 6.f);
-				dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2), IM_COL32(0, 0, 0, 170), 3.f);
-				dl->AddText(tp, fill | 0xFF000000u, g_death.text);
+				ImVec2 a, b;
+				bar_rect(g_settings.oob_bar_anchor, g_settings.oob_bar_x, g_settings.oob_bar_y, (std::max)(20, g_settings.oob_bar_w), (std::max)(2, g_settings.oob_bar_h), a, b);
+				const float w = b.x - a.x, f = g_death.bar;
+				const ImU32 fill = IM_COL32((int)(255.f * (1.f - f)), (int)(220.f * f + 35.f * (1.f - f)), 40, 235);
+				dl->AddRectFilled(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), IM_COL32(0, 0, 0, 170), 4.f);
+				dl->AddRectFilled(a, ImVec2(a.x + w * f, b.y), fill, 3.f);
+				dl->AddRect(a, b, IM_COL32(255, 255, 255, 120), 3.f, 0, 1.5f);
+				if (g_death.text[0])
+				{
+					const ImVec2 ts = ImGui::CalcTextSize(g_death.text);
+					const ImVec2 tp((a.x + b.x) * 0.5f - ts.x * 0.5f, a.y - ts.y - 6.f);
+					dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2), IM_COL32(0, 0, 0, 170), 3.f);
+					dl->AddText(tp, fill | 0xFF000000u, g_death.text);
+				}
 			}
+			// detection bar: while nothing is counting, the ticks until the next out-of-bounds check (every 16th tick).
+			// Full right after a check, empty / white on the check tick; label below.
+			if (g_death.valid && g_death.oob_counter == 0)
+			{
+				const int n = g_death.oob_next_check;
+				ImVec2 a, b;
+				bar_rect(g_settings.detect_bar_anchor, g_settings.detect_bar_x, g_settings.detect_bar_y, (std::max)(20, g_settings.detect_bar_w), (std::max)(2, g_settings.detect_bar_h), a, b);
+				const float w = b.x - a.x, f = std::clamp(n / 16.f, 0.f, 1.f);
+				const ImU32 fill = n == 0 ? IM_COL32(255, 255, 255, 240) : IM_COL32(70, 160, 255, 230);
+				dl->AddRectFilled(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), IM_COL32(0, 0, 0, 170), 4.f);
+				dl->AddRectFilled(a, ImVec2(a.x + w * f, b.y), fill, 3.f);
+				dl->AddRect(a, b, IM_COL32(255, 255, 255, 110), 3.f, 0, 1.5f);
+				char txt[48]; snprintf(txt, sizeof(txt), n == 0 ? "OOB CHECK NOW" : "OOB check in %d ticks", n);
+				const ImVec2 ts = ImGui::CalcTextSize(txt);
+				const ImVec2 tp((a.x + b.x) * 0.5f - ts.x * 0.5f, b.y + 5.f);
+				dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2), IM_COL32(0, 0, 0, 170), 3.f);
+				dl->AddText(tp, IM_COL32(150, 200, 255, 255), txt);
+			}
+		}
+
+		// the info panel's out-of-bounds section on its own (info panel on, Ghost viewer off)
+		void draw_oob_panel_lines()
+		{
+			if (!g_death.valid) return;
+			if (g_death.oob_counter > 0)
+				ImGui::TextColored(ImVec4(0.47f, 0.86f, 1.f, 1.f), "OUT OF BOUNDS (your body is inside solid / outside the level): %d of %d ticks - killed in %d ticks",
+					g_death.oob_counter, g_death.oob_limit + 1, (std::max)(0, g_death.oob_limit + 1 - g_death.oob_counter));
+			else
+				ImGui::TextDisabled("OUT OF BOUNDS: not counting. The check starts only on ticks where (tick + player index %d) %% 16 == 0 - next in %d ticks; then %d ticks in a row kill",
+					g_death.player_index, g_death.oob_next_check, g_death.oob_limit + 1);
+			if (g_death.kv_count > 0)
+			{
+				ImGui::Text("KILL VOLUMES: %d (%d enabled)   one checked per tick: #%d this tick", g_death.kv_count, g_death.kv_enabled, g_death.kv_checking);
+				if (g_death.kv_inside.empty()) ImGui::TextDisabled("    you are not inside an enabled kill volume");
+				for (const auto& in : g_death.kv_inside)
+					ImGui::TextColored(ImVec4(1.f, 0.9f, 0.f, 1.f), "    INSIDE kill volume #%d - checked in %d ticks; then every %d ticks", in.first, in.second, g_death.kv_count);
+			}
+			else ImGui::TextDisabled("KILL VOLUMES: none on this map");
+		}
+
+		void draw_oob_panel()
+		{
+			ImGui::SetNextWindowPos(ImVec2(10, 120), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowBgAlpha(0.6f);
+			if (ImGui::Begin("Ghost / TIM viewer", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings))
+				draw_oob_panel_lines();
+			ImGui::End();
 		}
 	}
 
@@ -2398,6 +2590,7 @@ namespace GhostViewer
 		++g_frame_counter;
 		apply_practice_toggles();
 		poll_offset_shortcuts();
+		if (g_lt_req) { const int r = g_lt_req; g_lt_req = 0; if (game_in_progress()) do_launch_teleport(r); }
 		draw_toast();
 		if (g_offset_req && (!g_settings.enabled || !game_in_progress()))
 		{
@@ -2416,6 +2609,8 @@ namespace GhostViewer
 		// the death bar works on its own (it only needs the game running, not the Ghost viewer)
 		if (g_settings.oob_bar && !game_time_get_paused() && !cinematic_in_progress()) { update_death_state(); draw_death_bar(); }
 		else g_death = s_death_state{};
+		// info panel without the Ghost viewer: just its out-of-bounds section
+		if (g_settings.info_panel && g_settings.oob_bar && !g_settings.enabled) draw_oob_panel();
 		if (!g_settings.enabled || game_time_get_paused() || cinematic_in_progress()) return;   // nothing while paused / in menus / in cutscenes
 
 
@@ -2460,18 +2655,89 @@ namespace GhostViewer
 		};
 		auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
 
-		if (!ImGui::CollapsingHeader("Ghost / TIM Viewer")) return;
+		if (!ImGui::CollapsingHeader("Spooky Ghost Settings")) return;
 		ImGui::Checkbox("Third person camera", &s.third_person);
 		tip("Moves your view behind your character (render camera only: aiming and physics are unchanged). Works with or without the ghost viewer.");
 		ImGui::SameLine(); ImGui::Checkbox("Disable AI", &s.disable_ai);
 		tip("Freezes all AI (same as 'ai_enable false'): actors stop moving, perceiving and shooting. Local campaign only.");
 		ImGui::SameLine(); ImGui::Checkbox("Invulnerability", &s.invulnerable);
-		tip("Your unit cannot take damage (same as 'object_cannot_take_damage'). Local campaign only; undone when unticked.");
+		tip("Your unit takes no damage at all - including the game's own out-of-bounds and kill volume kills. Local campaign only.");
 		if (s.third_person)
 		{
 			ImGui::SliderInt("Distance (mwu)", &s.tp_distance_mwu, 0, 4000);
 			ImGui::SliderInt("Height (mwu)", &s.tp_height_mwu, -1000, 2000);
 			ImGui::SliderInt("Side (mwu)", &s.tp_side_mwu, -1500, 1500);
+		}
+		if (ImGui::TreeNode("Launch / Teleport"))
+		{
+			static const char* keys2[] = { "None", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "Page Up", "Page Down" };
+			static const int vks2[] = { 0, VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12, VK_INSERT, VK_DELETE, VK_HOME, VK_END, VK_PRIOR, VK_NEXT };
+			auto key_combo2 = [&](const char* label, int* vk)
+			{
+				int idx = 0;
+				for (int i = 0; i < IM_ARRAYSIZE(vks2); ++i) if (vks2[i] == *vk) idx = i;
+				ImGui::SetNextItemWidth(110);
+				if (ImGui::Combo(label, &idx, keys2, IM_ARRAYSIZE(keys2))) *vk = vks2[idx];
+			};
+			auto vec_ui = [](const char* label, int* x, int* y, int* z)
+			{
+				float v[3] = { *x * 0.001f, *y * 0.001f, *z * 0.001f };
+				ImGui::SetNextItemWidth(260);
+				if (ImGui::InputFloat3(label, v, "%.3f")) { *x = (int)std::lround(v[0] * 1000.f); *y = (int)std::lround(v[1] * 1000.f); *z = (int)std::lround(v[2] * 1000.f); }
+			};
+			if (ImGui::Button("Launch")) g_lt_req = 1;
+			tip("Adds this velocity to you (or the vehicle you are in).");
+			ImGui::SameLine(); ImGui::Checkbox("Absolute##launch", &s.launch_absolute);
+			tip("Off: forward / right / up of where you are looking. On: a world-space velocity.");
+			ImGui::SameLine(); ImGui::Checkbox("Ignore look pitch##launch", &s.launch_ignore_z);
+			vec_ui(s.launch_absolute ? "Velocity (x, y, z)##launch" : "Velocity (forward, right, up)##launch", &s.launch_x_mwu, &s.launch_y_mwu, &s.launch_z_mwu);
+			if (ImGui::Button("Teleport")) g_lt_req = 2;
+			tip("Moves you (or the vehicle you are in).");
+			ImGui::SameLine(); ImGui::Checkbox("Absolute##teleport", &s.teleport_absolute);
+			tip("Off: that far forward / right / up from where you are, along where you are looking. On: to a world position.");
+			ImGui::SameLine(); ImGui::Checkbox("Ignore look pitch##teleport", &s.teleport_ignore_z);
+			vec_ui(s.teleport_absolute ? "Position (x, y, z)##teleport" : "Offset (forward, right, up)##teleport", &s.teleport_x_mwu, &s.teleport_y_mwu, &s.teleport_z_mwu);
+			if (s.teleport_absolute && ImGui::Button("Fill with current position"))
+			{
+				const datum pi = player_index_from_user_index(0);
+				const player_datum* pl = pi != NONE ? (const player_datum*)datum_get(player_data_get(), pi) : nullptr;
+				if (pl && pl->unit_index != NONE)
+					if (const object_datum* o = (const object_datum*)object_try_and_get_and_verify_type(pl->unit_index, _object_mask_all))
+					{
+						s.teleport_x_mwu = (int)std::lround(o->object.position.x * 1000.f);
+						s.teleport_y_mwu = (int)std::lround(o->object.position.y * 1000.f);
+						s.teleport_z_mwu = (int)std::lround(o->object.position.z * 1000.f);
+					}
+			}
+			key_combo2("Launch key", &s.key_launch); ImGui::SameLine();
+			key_combo2("Teleport key", &s.key_teleport);
+			static const char* pads2[] = { "None", "Back + LB / RB", "Left stick click + LB / RB" };
+			ImGui::SetNextItemWidth(260);
+			ImGui::Combo("Controller (launch / teleport)", &s.pad_launch_teleport, pads2, IM_ARRAYSIZE(pads2));
+			tip("Hold the first button and press the second: LB launches, RB teleports. (Back + D-pad Up is Cartographer's own menu.)");
+			ImGui::TreePop();
+		}
+		ImGui::Separator();
+		ImGui::Checkbox("Info panel", &s.info_panel);
+		tip("The on-screen panel: with the Ghost viewer on, tolerances, pair / TIM counts, over-credit, travel rows and diagnostics; with the Out-of-bounds timer bar on, its out-of-bounds and kill volume numbers (also without the Ghost viewer).");
+		ImGui::Checkbox("Out-of-bounds timer bar", &s.oob_bar);
+		tip("An on-screen bar for whatever will kill you first outside the level: the out-of-bounds count (your body inside solid / outside the level; 16 ticks in a row kill) or the turn of a kill volume you are inside (one volume is checked per tick, in rotation). Full / green draining to red, labelled OUT OF BOUNDS or KILL VOLUME #k with the ticks left. A second, blue bar shows the ticks until the next out-of-bounds check while nothing is counting (the check only comes on every 16th tick). Works without the Ghost viewer.");
+		if (ImGui::TreeNode("Out-of-bounds Bar Settings"))
+		{
+			static const char* corners[] = { "Top Left", "Top Right", "Bottom Right", "Bottom Left" };
+			auto bar_ui = [&](const char* name, int* anchor, int* x, int* y, int* w, int* h)
+			{
+				ImGui::TextDisabled("%s", name);
+				ImGui::PushID(name);
+				ImGui::SetNextItemWidth(140); ImGui::Combo("Corner to Anchor to", anchor, corners, IM_ARRAYSIZE(corners));
+				int off[2] = { *x, *y }, sz[2] = { *w, *h };
+				ImGui::SetNextItemWidth(260); if (ImGui::SliderInt2("Pixel Offset from Corner", off, 0, 3840)) { *x = off[0]; *y = off[1]; }
+				ImGui::SetNextItemWidth(260); if (ImGui::SliderInt2("Bar Size", sz, 2, 2000)) { *w = (std::max)(20, sz[0]); *h = (std::max)(2, sz[1]); }
+				ImGui::PopID();
+			};
+			bar_ui("Death bar (out of bounds / kill volume)", &s.oob_bar_anchor, &s.oob_bar_x, &s.oob_bar_y, &s.oob_bar_w, &s.oob_bar_h);
+			bar_ui("Detection bar (next out-of-bounds check)", &s.detect_bar_anchor, &s.detect_bar_x, &s.detect_bar_y, &s.detect_bar_w, &s.detect_bar_h);
+			ImGui::TreePop();
 		}
 		ImGui::Separator();
 		ImGui::Checkbox("Ghost viewer", &s.enabled);
@@ -2482,8 +2748,6 @@ namespace GhostViewer
 		auto section = [](const char* name) { ImGui::Spacing(); ImGui::TextDisabled("%s", name); ImGui::Separator(); };
 
 		section("Player");
-		ImGui::Checkbox("Out-of-bounds timer bar", &s.oob_bar);
-		tip("An on-screen bar for whatever will kill you first outside the level: the out-of-bounds count (your body inside solid / outside the level; 16 ticks in a row kill, and the first check only comes on every 16th tick) or the turn of a kill volume you are inside (one volume is checked per tick, in rotation). Full / green draining to red, labelled OUT OF BOUNDS or KILL VOLUME #k with the ticks left. Works without the Ghost viewer; the info panel adds the numbers.");
 		ImGui::Checkbox("Backstep rewind poses", &s.rewind);
 		tip("Yellow = where the last backstep put you back to, orange = where you were before it.");
 		ImGui::Checkbox("Pass-through prediction", &s.pass_through);
@@ -2550,17 +2814,19 @@ namespace GhostViewer
 			};
 			key_combo("Save key", &s.key_offset_save); ImGui::SameLine();
 			key_combo("Load key", &s.key_offset_load);
-			static const char* pads[] = { "None", "Back + D-pad Left / Right", "Back + LB / RB", "Left stick click + D-pad Left / Right" };
+			// stored values: 0 none, 1 Back + D-pad L/R, 3 LS click + D-pad L/R (2 was Back + LB / RB - now Launch / Teleport)
+			static const char* pads[] = { "None", "Back + D-pad Left / Right", "Left stick click + D-pad Left / Right" };
+			static const int pad_vals[] = { 0, 1, 3 };
+			int pad_idx = 0;
+			for (int i = 0; i < 3; ++i) if (pad_vals[i] == s.pad_offset) pad_idx = i;
 			ImGui::SetNextItemWidth(260);
-			ImGui::Combo("Controller (save / load)", &s.pad_offset, pads, IM_ARRAYSIZE(pads));
+			if (ImGui::Combo("Controller (save / load)", &pad_idx, pads, IM_ARRAYSIZE(pads))) s.pad_offset = pad_vals[pad_idx];
 			ImGui::Checkbox("Restore offsets after natural reverts too", &s.offset_natural_reverts);
 			tip("Off: only Load Offsets restores them; dying or reverting from the pause menu resets them like normal. On: any revert that puts you back where the offsets were saved restores them.");
 			tip("Controller shortcut: hold the first button and press the second - left side saves, right side loads.");
 		}
 
 		section("Logging");
-		ImGui::Checkbox("Info panel", &s.info_panel);
-		tip("The on-screen panel with tolerances, pair / TIM counts, over-credit, travel rows and diagnostics.");
 		ImGui::Checkbox("Desync logger", &s.logger);
 		tip("Appends to GhostViewerLog.csv next to halo2.exe: every backstep rewind (distance, from/to, S) and every offset episode (start with TIM and over-credit, end with its peak), for level polygons and objects.");
 

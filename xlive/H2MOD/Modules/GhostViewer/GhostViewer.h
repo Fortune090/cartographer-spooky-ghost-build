@@ -55,7 +55,16 @@ namespace GhostViewer
 		int key_offset_save = 0x74;       // Save Offsets key (VK_F5)
 		int key_offset_load = 0x75;       // Load Offsets key (VK_F6)
 		bool offset_natural_reverts = false;
-		bool oob_bar = false;              // out-of-bounds / kill volume death bar  // also restore saved offsets after natural reverts to that checkpoint
+		bool oob_bar = false;              // out-of-bounds / kill volume death bar
+		// Launch / Teleport (vectors in thousandths of a world unit)
+		bool launch_absolute = false, launch_ignore_z = false, teleport_absolute = false, teleport_ignore_z = false;
+		int launch_x_mwu = 500, launch_y_mwu = 0, launch_z_mwu = 0;
+		int teleport_x_mwu = 5000, teleport_y_mwu = 0, teleport_z_mwu = 0;
+		int key_launch = 0, key_teleport = 0;     // keyboard (VK, 0 = none)
+		int pad_launch_teleport = 1;               // controller: 0 none, 1 Back + D-pad Up / Down, 2 LS click + D-pad Up / Down
+		// bar geometry: anchor corner (0 TL, 1 TR, 2 BR, 3 BL), pixel offset from that corner, size (1920x1080 defaults)
+		int oob_bar_anchor = 0, oob_bar_x = 690, oob_bar_y = 324, oob_bar_w = 540, oob_bar_h = 20;
+		int detect_bar_anchor = 0, detect_bar_x = 690, detect_bar_y = 380, detect_bar_w = 540, detect_bar_h = 14;  // also restore saved offsets after natural reverts to that checkpoint
 		int pad_offset = 1;               // controller shortcut: 0 none, 1 Back + D-pad L/R, 2 Back + LB/RB, 3 LS click + D-pad L/R
 		int col_obj_box = 0x9090FF;       // object piece box (skipped, honest)
 		int col_obj_believed = 0xFFA000;  // believed poses (objects)
